@@ -20,8 +20,8 @@ A simple Python project to record audio using a hotkey (such as a remapped mouse
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/YOUR_USERNAME/speech-to-text.git
-   cd speech-to-text
+   git clone https://github.com/CDNsun/speech-to-text-for-ubuntu
+   cd speech-to-text-for-ubuntu
    ```
 2. **Create and activate a Python virtual environment**
    ```bash
