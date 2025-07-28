@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Simple speech-to-text processor using Faster Whisper.
+Simple speech-to-text processor using Faster Whisper. For speed we use the tiny.en model.
 
 The script expects an audio file (e.g. /tmp/recorded_audio.wav) as an argument.
 
