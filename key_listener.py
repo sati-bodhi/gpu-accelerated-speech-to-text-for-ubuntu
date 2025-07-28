@@ -37,10 +37,6 @@ import sys
 import subprocess
 import pwd
 
-# Remove all handlers associated with the root logger object.
-for handler in logging.root.handlers[:]:
-    logging.root.removeHandler(handler)
-    
 # Setup logging
 logging.basicConfig(
     level=logging.INFO,
