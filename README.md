@@ -15,7 +15,7 @@ A simple Python project to record audio using a hotkey (such as a remapped mouse
 - Python virtual environment with required packages installed (see below)
 - `arecord` (for audio recording)
 - `evdev` (for key listening)
-- A speech-to-text model (e.g., Faster Whisper)
+- A speech-to-text model Faster Whisper
 
 ## Setup
 
