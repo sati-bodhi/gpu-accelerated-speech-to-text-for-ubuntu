@@ -37,6 +37,7 @@ import sys
 import subprocess
 import pwd
 
+
 # Setup logging
 logging.basicConfig(
     level=logging.INFO,
@@ -66,9 +67,9 @@ AUDIO_FILE = "/tmp/recorded_audio.wav"
 # The user who runs the X server accessing the microphone. 
 USER = "david"
 
-# Get XAUTHORITY variable from a running process (e.g., /usr/bin/ksmserver) owned by USER
+# We will get XAUTHORITY variable from a running process (e.g., /usr/bin/ksmserver) owned by USER.
 # Find a process that is always running in single instance and owned by USER and has 
-# XAUTHORITY in its environment (see /proc/{pid}/environ)
+# XAUTHORITY variable defined in its environment (see /proc/{pid}/environ)
 PROCESS_FOR_XAUTH_COPY = "/usr/bin/ksmserver"
 
 # The script that will process the stored audio and generate text from it. 
