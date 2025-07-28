@@ -1,0 +1,6 @@
+# Python dependencies for Speech-to-Text Key Listener
+numpy
+soundfile
+pyautogui
+evdev
+faster-whisper 
