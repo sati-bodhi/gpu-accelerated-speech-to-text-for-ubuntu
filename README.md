@@ -1,6 +1,6 @@
 # Speech-to-Text For Ubuntu
 
-A simple Python project to record audio using a hotkey (such as a remapped mouse button) and automatically transcribe it to text using a speech-to-text Faster Whisper model. Designed for use on Linux systems (tested on Ubuntu 24.04.2 LTS).
+A simple Python project to record audio using a hotkey (such as a remapped mouse side button) and automatically and offline transcribe it to text using a speech-to-text Faster Whisper model. Designed for use on Linux systems (tested on Ubuntu 24.04.2 LTS).
 
 ## Project Overview
 
