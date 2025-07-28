@@ -4,7 +4,8 @@ A simple Python project to record audio using a hotkey (such as a remapped mouse
 
 ## Project Overview
 
-- **key_listener.py**: Listens for a specific key (e.g., F16, which can be mapped from a mouse button) to start and stop audio recording on the key release. When recording stops, it triggers speech-to-text processing.
+- **key_listener.py**: Monitors a designated key (such as F16, which can be mapped to a mouse button) to control audio recording. Recording begins when the key is pressed and ends upon release, at which point speech-to-text processing is automatically initiated.
+
 - **speech_to_text.py**: Loads the recorded audio, processes it (converts stereo to mono if needed), and transcribes the speech to text using the Faster Whisper model.
 
 ## Requirements
