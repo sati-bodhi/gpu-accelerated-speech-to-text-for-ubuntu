@@ -92,7 +92,10 @@ def setup_environment():
     })
 
     # Get XAUTHORITY from the environment of the running process 
-    # PROCESS_FOR_XAUTH_COPY owned by USER
+    # PROCESS_FOR_XAUTH_COPY owned by USER.
+    # If your XAUTHORITY is simply ~/.Xauthority, then you can skip this step
+    # and set env["XAUTHORITY"] = "~/.Xauthority"
+    # Check your confiuration using: echo $XAUTHORITY (as USER)
     try:
         # Use pgrep to get the PID of the process
         pid = subprocess.check_output(
