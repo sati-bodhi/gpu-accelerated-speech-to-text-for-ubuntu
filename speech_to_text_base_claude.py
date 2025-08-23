@@ -46,7 +46,7 @@ Based on our current conversation context, please provide the corrected version 
 
 Please respond with ONLY the corrected transcript text, no explanations or quotes."""
 
-        cmd = ['claude', '-c', '-p', correction_prompt]
+        cmd = ['claude', '-c', '-p', '--model', 'claude-3-5-haiku-20241022', correction_prompt]
         
         start_time = time.time()
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)

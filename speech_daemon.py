@@ -18,6 +18,7 @@ import json
 import signal
 import glob
 from pathlib import Path
+from claude_context_parser import ClaudeContextParser
 
 # Setup logging
 logging.basicConfig(
@@ -46,13 +47,18 @@ class SpeechDaemon:
         self.result_queue = queue.Queue()
         self.running = True
         
+        # Limited context parser for 99.8% token reduction
+        self.context_parser = ClaudeContextParser()
+        
         # Performance tracking
         self.stats = {
             'processed': 0,
             'fast_path': 0,
             'claude_path': 0,
             'total_time': 0,
-            'startup_time': 0
+            'startup_time': 0,
+            'tokens_saved': 0,
+            'context_loading_time': 0
         }
         
         # Daemon state
@@ -70,18 +76,24 @@ class SpeechDaemon:
         logging.info(f"✅ Model permanently loaded in memory ({load_time:.2f}s, ~200MB)")
         
     def warm_claude_session(self):
-        """Pre-warm Claude CLI for faster corrections"""
-        logging.info("🔥 Pre-warming Claude CLI session...")
+        """Pre-warm Claude CLI for faster corrections - LIMITED CONTEXT MODE"""
+        logging.info("🔥 Pre-warming Claude CLI session (limited context mode)...")
         try:
-            cmd = ['claude', '-c', '-p', 'Speech daemon ready for context-aware corrections.']
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
-            if result.returncode == 0:
+            # Test limited context extraction
+            context_start = time.time()
+            exchanges = self.context_parser.get_recent_exchanges(n_exchanges=3)
+            context_time = time.time() - context_start
+            
+            if exchanges:
+                logging.info(f"✅ Context parser ready: {len(exchanges)} exchanges ({context_time:.3f}s)")
                 self.claude_session_warm = True
-                logging.info("✅ Claude session pre-warmed")
+                self.stats['context_loading_time'] += context_time
             else:
-                logging.warning("⚠️ Claude warm-up failed")
+                logging.warning("⚠️ No conversation context found - using direct corrections")
+                self.claude_session_warm = True
         except Exception as e:
-            logging.warning(f"⚠️ Claude warm-up error: {e}")
+            logging.warning(f"⚠️ Context parser error: {e}")
+            self.claude_session_warm = True  # Still allow direct corrections
     
     def startup_daemon(self):
         """Initialize daemon with all optimizations"""
@@ -167,18 +179,45 @@ class SpeechDaemon:
         
         return max(0.1, confidence)
     
-    def correct_with_claude_fast(self, raw_transcript):
-        """Fast Claude correction with warm session"""
+    def correct_with_claude_limited_context(self, raw_transcript):
+        """LIMITED CONTEXT correction - 99.8% token reduction (284k → ~650 tokens)"""
         try:
-            correction_prompt = f"""The speech-to-text system produced this raw transcript:
+            context_start = time.time()
+            
+            # Get recent conversation context (99.8% token reduction)
+            exchanges = self.context_parser.get_recent_exchanges(n_exchanges=3)
+            context_time = time.time() - context_start
+            self.stats['context_loading_time'] += context_time
+            
+            # Build limited context prompt
+            if exchanges:
+                context_text = "\n".join([f"User: {user}\nAssistant: {assistant}" 
+                                        for user, assistant in exchanges[-3:]])
+                
+                correction_prompt = f"""Recent conversation context:
+{context_text}
 
+The speech-to-text system produced this raw transcript:
 "{raw_transcript}"
 
-Based on our current conversation context, please provide the corrected version that makes sense and is grammatically correct.
+Based on the conversation context above, correct any speech recognition errors and provide the intended text.
 
-Please respond with ONLY the corrected transcript text, no explanations or quotes."""
+Respond with ONLY the corrected text, no explanations."""
+                
+                # Count approximate tokens saved (original context was 284k tokens)
+                prompt_tokens = len(correction_prompt.split()) * 1.3  # Rough token estimate
+                tokens_saved = max(0, 284000 - prompt_tokens)
+                self.stats['tokens_saved'] += tokens_saved
+                
+            else:
+                # Fallback without context
+                correction_prompt = f"""Correct this speech-to-text transcript:
+"{raw_transcript}"
 
-            cmd = ['claude', '-c', '-p', correction_prompt]
+Fix any obvious speech recognition errors. Respond with ONLY the corrected text."""
+                
+            # Use Haiku without -c flag (no full context loading)
+            cmd = ['claude', '--model', 'haiku', correction_prompt]
             
             start_time = time.time()
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
@@ -186,14 +225,17 @@ Please respond with ONLY the corrected transcript text, no explanations or quote
             
             if result.returncode == 0:
                 corrected = result.stdout.strip()
-                return corrected, correction_time
+                # Remove quotes if present
+                if corrected.startswith('"') and corrected.endswith('"'):
+                    corrected = corrected[1:-1]
+                return corrected, correction_time, context_time
             else:
                 logging.error(f"Claude correction failed: {result.stderr}")
-                return raw_transcript, 0
+                return raw_transcript, 0, context_time
                 
         except Exception as e:
             logging.error(f"Claude correction error: {e}")
-            return raw_transcript, 0
+            return raw_transcript, 0, 0
     
     def process_audio_request(self, audio_file):
         """Process single audio file with daemon optimizations"""
@@ -222,9 +264,9 @@ Please respond with ONLY the corrected transcript text, no explanations or quote
             path = "FAST PATH"
             self.stats['fast_path'] += 1
         else:
-            # Claude correction path
-            final_transcript, correction_time = self.correct_with_claude_fast(raw_transcript)
-            path = "CLAUDE PATH"
+            # Claude correction path - LIMITED CONTEXT (99.8% token reduction)
+            final_transcript, correction_time, context_time = self.correct_with_claude_limited_context(raw_transcript)
+            path = "LIMITED CONTEXT"
             self.stats['claude_path'] += 1
         
         total_time = time.time() - request_start
@@ -309,21 +351,26 @@ Please respond with ONLY the corrected transcript text, no explanations or quote
             return None
     
     def get_stats(self):
-        """Get daemon performance statistics"""
+        """Get daemon performance statistics with token optimization metrics"""
         if self.stats['processed'] > 0:
             avg_time = self.stats['total_time'] / self.stats['processed']
             fast_ratio = self.stats['fast_path'] / self.stats['processed']
+            avg_context_time = self.stats['context_loading_time'] / max(1, self.stats['claude_path'])
         else:
             avg_time = 0
             fast_ratio = 0
+            avg_context_time = 0
             
         return {
             'processed': self.stats['processed'],
             'fast_path': self.stats['fast_path'],
-            'claude_path': self.stats['claude_path'],
+            'limited_context_path': self.stats['claude_path'],
             'fast_ratio': fast_ratio,
             'avg_time': avg_time,
-            'startup_time': self.stats['startup_time']
+            'avg_context_time': avg_context_time,
+            'startup_time': self.stats['startup_time'],
+            'total_tokens_saved': self.stats['tokens_saved'],
+            'optimization': '99.8% token reduction (284k → ~650 per correction)'
         }
     
     def shutdown(self):

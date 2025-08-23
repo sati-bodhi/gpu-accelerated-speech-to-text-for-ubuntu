@@ -57,7 +57,7 @@ class ParallelSpeechProcessor:
             logging.info("🔥 Warming Claude CLI session...")
             try:
                 # Send a quick test to establish session
-                cmd = ['claude', '-c', '-p', 'Ready for speech correction tasks.']
+                cmd = ['claude', '-c', '--model', 'haiku', 'Ready for speech correction tasks.']
                 result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
                 if result.returncode == 0:
                     self.claude_session_warm = True
@@ -102,7 +102,7 @@ Based on our current conversation context, please provide the corrected version 
 
 Please respond with ONLY the corrected transcript text, no explanations or quotes."""
 
-            cmd = ['claude', '-c', '-p', correction_prompt]
+            cmd = ['claude', '-c', '--model', 'haiku', correction_prompt]
             
             start_time = time.time()
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
