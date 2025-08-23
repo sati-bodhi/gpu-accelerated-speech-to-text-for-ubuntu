@@ -59,24 +59,24 @@ except ImportError:
 # Run `sudo evtest` in a terminal.
 # If you used input-remapper-gtk then it can look like this: 
 # /dev/input/event12:     input-remapper keyboard
-DEVICE_PATH = "/dev/input/event12"
+DEVICE_PATH = "/dev/input/event2"
 
 # Just a temporary file to store the audio. 
 AUDIO_FILE = "/tmp/recorded_audio.wav"
 
 # The user who runs the X server accessing the microphone. 
-USER = "david"
+USER = "sati"
 
 # We will get XAUTHORITY variable from a running process (e.g., /usr/bin/ksmserver) owned by USER.
 # Find a process that is always running in single instance and owned by USER and has 
 # XAUTHORITY variable defined in its environment (see /proc/{pid}/environ)
-PROCESS_FOR_XAUTH_COPY = "/usr/bin/ksmserver"
+PROCESS_FOR_XAUTH_COPY = "/usr/libexec/gnome-session-binary"
 
 # The script that will process the stored audio and generate text from it. 
-SPEECHTOTEXT_SCRIPT = "/home/david/Cursor/speech-to-text/speech_to_text.py"
+SPEECHTOTEXT_SCRIPT = "/home/sati/speech-to-text-for-ubuntu/speech_to_text.py"
 
 # Your python virtual environment
-PYTHON_VENV = "/home/david/venv/bin/python3"
+PYTHON_VENV = "/home/sati/speech-to-text-for-ubuntu/venv/bin/python3"
 
 def setup_environment():
     pw_record = pwd.getpwnam(USER)
@@ -129,7 +129,7 @@ def main():
     device = InputDevice(DEVICE_PATH)
     recording_process = None
     
-    logging.info(f"Listening for KEY_F16 on {DEVICE_PATH}")
+    logging.info(f"Listening for KEY_INSERT on {DEVICE_PATH}")
     
     try:
         for event in device.read_loop():
@@ -140,7 +140,7 @@ def main():
                 if key.keystate == 2:
                     continue
                 
-                if key.keycode == 'KEY_F16':
+                if key.keycode == 'KEY_INSERT':
                     if key.keystate == key.key_down and recording_process is None:
                         # Start recording
                         logging.info("Starting audio recording")

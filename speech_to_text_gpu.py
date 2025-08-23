@@ -1,21 +1,14 @@
 #!/usr/bin/env python3
 """
-Simple speech-to-text processor using Faster Whisper. For speed we use the tiny.en model.
-
-The script expects an audio file (e.g. /tmp/recorded_audio.wav) as an argument.
-
-Usage: python3 speech_to_text.py <audio_file>
-
-Tested on Ubuntu 24.04.2 LTS
-
-The script is intended to be run using your Python virtual environment (see key_listener.py).
+GPU-accelerated speech-to-text processor using Faster Whisper medium model.
+Falls back to CPU if GPU is not available.
 """
 
 import logging
 import sys
 import os
 import pwd
-
+import time
 
 # Setup logging
 logging.basicConfig(
@@ -34,7 +27,6 @@ try:
     from faster_whisper import WhisperModel
 except ImportError as e:
     print(f"Error: Required library not found: {e}")
-    print("Install in your venv with: pip install numpy pyautogui soundfile faster-whisper")
     sys.exit(1)
 
 def log_user_info():
@@ -70,17 +62,41 @@ def load_audio(file_path):
         sys.exit(1)
 
 def transcribe_audio(audio):
-    """Transcribe audio using Whisper."""
+    """Transcribe audio using Whisper with GPU acceleration."""
     try:
-        logging.info("Loading Whisper model...")
-        model = WhisperModel("tiny.en", compute_type="int8")
+        # Try GPU first, fall back to CPU if needed
+        device = "cuda"
+        compute_type = "float16"
+        model_size = "medium.en"  # Better accuracy
+        
+        try:
+            logging.info(f"Loading Whisper {model_size} model on GPU...")
+            start_time = time.time()
+            model = WhisperModel(model_size, device=device, compute_type=compute_type)
+            logging.info(f"Model loaded in {time.time() - start_time:.2f}s")
+        except Exception as gpu_error:
+            logging.warning(f"GPU initialization failed: {gpu_error}")
+            logging.info("Falling back to CPU with smaller model...")
+            device = "cpu"
+            compute_type = "int8"
+            model_size = "base.en"  # Use base on CPU for better speed
+            model = WhisperModel(model_size, device=device, compute_type=compute_type)
+            logging.info(f"Using {model_size} on CPU")
         
         logging.info("Starting transcription...")
-        segments, _ = model.transcribe(
+        start_time = time.time()
+        segments, info = model.transcribe(
             audio, 
             language="en", 
-            beam_size=1, 
-            vad_filter=False  # Disabled VAD due to low microphone volume issues
+            beam_size=5,  # Better accuracy
+            best_of=5,    # Better accuracy
+            temperature=0,  # More deterministic
+            vad_filter=True,  # Re-enable with GPU
+            vad_parameters=dict(
+                threshold=0.5,
+                min_silence_duration_ms=500,
+                min_speech_duration_ms=250
+            )
         )
         
         # Process segments
@@ -91,7 +107,9 @@ def transcribe_audio(audio):
                 results.append(text)
                 logging.info(f"Recognized: {text}")
         
-        logging.info(f"Transcription completed: {len(results)} segments")
+        transcribe_time = time.time() - start_time
+        logging.info(f"Transcription completed in {transcribe_time:.2f}s: {len(results)} segments")
+        logging.info(f"Using {device.upper()} with {model_size} model")
         return results
         
     except Exception as e:
@@ -110,7 +128,7 @@ def main():
     """Main function."""
     # Check arguments
     if len(sys.argv) < 2:
-        print("Usage: python speech_to_text.py <audio_file>")
+        print("Usage: python speech_to_text_gpu.py <audio_file>")
         sys.exit(1)
     
     audio_file = sys.argv[1]
@@ -135,4 +153,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

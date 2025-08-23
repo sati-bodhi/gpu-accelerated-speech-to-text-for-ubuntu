@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Simple speech-to-text processor using Faster Whisper. For speed we use the tiny.en model.
+Speech-to-text processor using Faster Whisper base.en model for balanced accuracy/speed.
 
 The script expects an audio file (e.g. /tmp/recorded_audio.wav) as an argument.
 
-Usage: python3 speech_to_text.py <audio_file>
+Usage: python3 speech_to_text_base.py <audio_file>
 
 Tested on Ubuntu 24.04.2 LTS
 
@@ -15,6 +15,7 @@ import logging
 import sys
 import os
 import pwd
+import time
 
 
 # Setup logging
@@ -70,12 +71,16 @@ def load_audio(file_path):
         sys.exit(1)
 
 def transcribe_audio(audio):
-    """Transcribe audio using Whisper."""
+    """Transcribe audio using Whisper base model."""
     try:
-        logging.info("Loading Whisper model...")
-        model = WhisperModel("tiny.en", compute_type="int8")
+        logging.info("Loading Whisper base.en model (balanced accuracy/speed)...")
+        start_load = time.time()
+        model = WhisperModel("base.en", device="cpu", compute_type="int8")
+        load_time = time.time() - start_load
+        logging.info(f"Model loaded in {load_time:.2f} seconds")
         
         logging.info("Starting transcription...")
+        start_transcribe = time.time()
         segments, _ = model.transcribe(
             audio, 
             language="en", 
@@ -91,7 +96,8 @@ def transcribe_audio(audio):
                 results.append(text)
                 logging.info(f"Recognized: {text}")
         
-        logging.info(f"Transcription completed: {len(results)} segments")
+        transcribe_time = time.time() - start_transcribe
+        logging.info(f"Transcription completed in {transcribe_time:.2f} seconds: {len(results)} segments")
         return results
         
     except Exception as e:
@@ -110,7 +116,7 @@ def main():
     """Main function."""
     # Check arguments
     if len(sys.argv) < 2:
-        print("Usage: python speech_to_text.py <audio_file>")
+        print("Usage: python speech_to_text_base.py <audio_file>")
         sys.exit(1)
     
     audio_file = sys.argv[1]
@@ -135,4 +141,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

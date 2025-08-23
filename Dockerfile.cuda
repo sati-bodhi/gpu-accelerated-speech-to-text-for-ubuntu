@@ -1,0 +1,45 @@
+FROM nvidia/cuda:12.1.1-devel-ubuntu22.04
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3 python3-pip libcudnn9-cuda-12 && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Pin NumPy to prevent compatibility issues with PyTorch cu118
+RUN pip install --no-cache-dir "numpy<2.0"
+
+# 1. PyTorch cu118 wheel (contains its own CUDA 11.8 runtime; driver ≥ 450 is fine)
+RUN pip install --no-cache-dir \
+        torch==2.1.2+cu118 \
+        torchvision==0.16.2+cu118 \
+        torchaudio==2.1.2+cu118 \
+        --extra-index-url https://download.pytorch.org/whl/cu118
+
+# 2. Install each package separately to avoid pip resolver issues
+RUN pip install --no-cache-dir --no-deps ctranslate2==3.24.0
+RUN pip install --no-cache-dir --no-deps faster-whisper==0.9.0
+RUN pip install --no-cache-dir soundfile
+
+# Install missing dependencies separately
+RUN pip install --no-cache-dir pyyaml tokenizers av huggingface-hub onnxruntime cffi
+
+# Create directory for models (will be cached)
+RUN mkdir -p /app/models
+
+# Copy our speech-to-text script
+COPY speech_to_text_docker.py /app/speech_to_text_docker.py
+
+# Create entrypoint script with diagnostic verification
+RUN echo '#!/bin/bash\n\
+echo "=== CUDA Diagnostic Verification ==="\n\
+python3 -c "import torch, ctranslate2; print('"'"'Torch:'"'"', torch.cuda.is_available()); print('"'"'CT2  :'"'"', ctranslate2.get_cuda_device_count())"\n\
+echo "==================================="\n\
+\n\
+if [ $# -eq 0 ]; then\n\
+    echo "Usage: docker run --gpus all -v /path/to/audio:/audio whisper-gpu /audio/file.wav"\n\
+else\n\
+    python3 /app/speech_to_text_docker.py "$@"\n\
+fi' > /app/entrypoint.sh && chmod +x /app/entrypoint.sh
+
+ENTRYPOINT ["/app/entrypoint.sh"]
