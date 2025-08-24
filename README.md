@@ -161,22 +161,24 @@ If you see `"Unable to load libcudnn_ops.so.9.1.0"`:
 
 ## Auto-Start on Login
 
-The system can automatically start the listener when you log in by adding it to your `.bashrc`:
+Automatically start the listener when you log in using the provided installer:
 
 ```bash
-# Start speech-to-text listener if not already running
-if ! pgrep -f "src/key_listener.py" > /dev/null; then
-    cd /home/sati/speech-to-text-for-ubuntu
-    nohup ./venv/bin/python3 src/key_listener.py > /tmp/speech_listener.log 2>&1 &
-    echo "Speech-to-text listener started"
-fi
+# Run the auto-start installer
+./scripts/install_autostart.sh
 ```
 
-This code:
-- ✅ Checks if listener is already running (prevents duplicates)
-- ✅ Starts in background with `nohup` (survives logout)
-- ✅ Logs output to `/tmp/speech_listener.log` for debugging
-- ✅ Works with any terminal or SSH session
+The installer will:
+- ✅ **Add auto-start code** to your `~/.bashrc`
+- ✅ **Check for duplicates** (prevents multiple instances)
+- ✅ **Verify installation** (checks paths and dependencies)
+- ✅ **Provide test option** (immediate verification)
+
+**Features of auto-start:**
+- Triggers on new terminals, SSH sessions, system reboot
+- Background process with `nohup` (survives logout)
+- Logs to `/tmp/speech_listener.log` for debugging
+- Smart duplicate prevention
 
 **Manual Controls:**
 ```bash
@@ -188,6 +190,8 @@ pkill -f "src/key_listener.py"
 
 # View logs
 tail -f /tmp/speech_listener.log
+
+# Uninstall: Edit ~/.bashrc and remove the auto-start section
 ```
 
 ## Configuration

@@ -78,6 +78,11 @@ INSERT key press → pynput listener → arecord → GPU wrapper script → CUDA
 pip install -r requirements.txt
 ```
 
+**Install Auto-start** (optional):
+```bash
+./scripts/install_autostart.sh
+```
+
 ### Development Commands
 
 **Check GPU Status**:
