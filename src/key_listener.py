@@ -98,11 +98,6 @@ def on_press(key):
     if key == keyboard.Key.insert:
         if not is_recording:
             start_recording()
-    elif key == keyboard.Key.esc:
-        logging.info("ESC pressed, exiting...")
-        if is_recording:
-            stop_recording_and_process()
-        return False
 
 def on_release(key):
     """Handle key release events"""
@@ -124,7 +119,7 @@ def main():
     
     logging.info("Starting key listener (pynput version)")
     logging.info("Hold INSERT key to record, release to transcribe")
-    logging.info("Press ESC to exit")
+    logging.info("Use 'pkill -f key_listener.py' to stop")
     
     # Create and start the listener
     with keyboard.Listener(
