@@ -72,14 +72,14 @@ def stop_recording_and_process():
     is_recording = False
     logging.info(f"Recording saved to {current_audio_file}")
     
-    # Process audio with timestamped file
-    logging.info("Running speech-to-text")
+    # Process audio with hybrid session approach
+    logging.info("Running hybrid session speech-to-text")
     try:
         subprocess.run([
-            "/home/sati/speech-to-text-for-ubuntu/scripts/run_gpu_speech.sh",
+            "/home/sati/speech-to-text-for-ubuntu/scripts/run_gpu_speech_session.sh",
             current_audio_file
         ], check=True)
-        logging.info("Speech-to-text completed")
+        logging.info("Session speech-to-text completed")
         
         # Cleanup old audio file after processing
         try:
@@ -117,8 +117,9 @@ def main():
     # Set up signal handler for clean shutdown
     signal.signal(signal.SIGINT, signal_handler)
     
-    logging.info("Starting key listener (pynput version)")
+    logging.info("Starting key listener (hybrid session version)")
     logging.info("Hold INSERT key to record, release to transcribe")
+    logging.info("Smart session daemon: fast cold start + auto VRAM release")
     logging.info("Use 'pkill -f key_listener.py' to stop")
     
     # Create and start the listener
