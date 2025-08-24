@@ -2,6 +2,8 @@
 
 A high-performance Python speech-to-text system that uses INSERT key recording and GPU-accelerated offline transcription with Faster Whisper models. Designed for Ubuntu systems with NVIDIA GPU support.
 
+> **Note**: This is an enhanced fork of [CDNsun/speech-to-text-for-ubuntu](https://github.com/CDNsun/speech-to-text-for-ubuntu) with GPU acceleration, minimal refactoring, and production-ready features.
+
 ## Key Features
 
 - 🚀 **GPU Acceleration**: 3.6x faster than CPU (RTX 4060: ~2.7s vs CPU: ~9.8s)
@@ -35,8 +37,8 @@ A high-performance Python speech-to-text system that uses INSERT key recording a
 ### 1. Clone and Setup
 
 ```bash
-git clone https://github.com/CDNsun/speech-to-text-for-ubuntu
-cd speech-to-text-for-ubuntu
+git clone https://github.com/sati-bodhi/gpu-accelerated-speech-to-text-for-ubuntu.git
+cd gpu-accelerated-speech-to-text-for-ubuntu
 ```
 
 ### 2. Create Virtual Environment
@@ -226,9 +228,18 @@ This codebase was refactored from 55+ files to 8 essential files for maintainabi
 
 See `CLAUDE.md` for detailed development guidance.
 
+## Attribution
+
+This project is an enhanced fork of the original [speech-to-text-for-ubuntu](https://github.com/CDNsun/speech-to-text-for-ubuntu) by CDNsun.
+
+**Original Project**: Copyright (c) 2025 CDNsun s.r.o.  
+**Enhanced Fork**: Adds GPU acceleration, minimal architecture, auto-start installer, and production features.
+
 ## License
 
 MIT License - see `LICENSE.md` for details.
+
+This project maintains the original MIT license from CDNsun and includes all required copyright notices.
 
 ## Performance History
 
