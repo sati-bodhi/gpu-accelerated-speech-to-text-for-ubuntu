@@ -30,7 +30,7 @@ logging.basicConfig(
 # Configuration
 AUDIO_FILE_TEMPLATE = "/tmp/recorded_audio_{}.wav"  # Timestamped to prevent repeated processing
 USER = "sati"
-SPEECHTOTEXT_SCRIPT = "/home/sati/speech-to-text-for-ubuntu/speech_to_text_medium.py"  # Plain medium model, no corrections
+SPEECHTOTEXT_SCRIPT = "/home/sati/speech-to-text-for-ubuntu/speech_to_text_gpu_fixed.py"  # GPU with fixed CUDNN library paths
 PYTHON_VENV = "/home/sati/speech-to-text-for-ubuntu/venv/bin/python3"
 
 # Global variables
@@ -76,8 +76,7 @@ def stop_recording_and_process():
     logging.info("Running speech-to-text")
     try:
         subprocess.run([
-            PYTHON_VENV,
-            SPEECHTOTEXT_SCRIPT,
+            "/home/sati/speech-to-text-for-ubuntu/run_gpu_speech.sh",
             current_audio_file
         ], check=True)
         logging.info("Speech-to-text completed")

@@ -1,13 +1,46 @@
 #!/usr/bin/env python3
 """
-GPU-accelerated speech-to-text processor using Faster Whisper medium model.
-Falls back to CPU if GPU is not available.
+GPU-accelerated speech-to-text processor with proper CUDNN library path setup.
 """
 
-import logging
-import sys
 import os
-import pwd
+import sys
+
+# Set up CUDNN library path before importing anything else
+def setup_cuda_env():
+    """Set up CUDA environment variables for proper library loading."""
+    try:
+        # Get the virtual environment path
+        venv_path = os.path.dirname(os.path.dirname(sys.executable))
+        
+        # CUDNN and CUBLAS library paths
+        cudnn_lib_path = os.path.join(venv_path, 'lib/python3.10/site-packages/nvidia/cudnn/lib')
+        cublas_lib_path = os.path.join(venv_path, 'lib/python3.10/site-packages/nvidia/cublas/lib')
+        
+        # Set LD_LIBRARY_PATH
+        current_path = os.environ.get('LD_LIBRARY_PATH', '')
+        new_paths = [cudnn_lib_path, cublas_lib_path]
+        
+        if current_path:
+            new_paths.append(current_path)
+            
+        os.environ['LD_LIBRARY_PATH'] = ':'.join(new_paths)
+        
+        print(f"CUDA environment setup:")
+        print(f"  CUDNN path: {cudnn_lib_path}")
+        print(f"  CUBLAS path: {cublas_lib_path}")
+        print(f"  LD_LIBRARY_PATH: {os.environ['LD_LIBRARY_PATH']}")
+        
+        return True
+        
+    except Exception as e:
+        print(f"Warning: Could not set up CUDA environment: {e}")
+        return False
+
+# Set up CUDA environment first
+setup_cuda_env()
+
+import logging
 import time
 
 # Setup logging
@@ -33,6 +66,7 @@ def log_user_info():
     """Log current user information."""
     try:
         uid = os.geteuid()
+        import pwd
         user = pwd.getpwuid(uid).pw_name
         logging.info(f"Running as user: {os.getlogin()}")
         logging.info(f"Effective user: {user} (UID: {uid})")
@@ -67,10 +101,10 @@ def transcribe_audio(audio):
         # Try GPU first, fall back to CPU if needed
         device = "cuda"
         compute_type = "float16"
-        model_size = "large-v3"  # Best accuracy with GPU
+        model_size = "large-v3"
         
         try:
-            logging.info(f"Loading Whisper {model_size} model on GPU...")
+            logging.info(f"Loading Whisper {model_size} model on GPU with fixed CUDNN paths...")
             start_time = time.time()
             model = WhisperModel(model_size, device=device, compute_type=compute_type)
             logging.info(f"Model loaded in {time.time() - start_time:.2f}s")
@@ -79,7 +113,7 @@ def transcribe_audio(audio):
             logging.info("Falling back to CPU with smaller model...")
             device = "cpu"
             compute_type = "int8"
-            model_size = "large-v3"  # Keep large model even on CPU fallback
+            model_size = "large-v3"
             model = WhisperModel(model_size, device=device, compute_type=compute_type)
             logging.info(f"Using {model_size} on CPU")
         
@@ -88,10 +122,10 @@ def transcribe_audio(audio):
         segments, info = model.transcribe(
             audio, 
             language="en", 
-            beam_size=5,  # Better accuracy
-            best_of=5,    # Better accuracy
-            temperature=0,  # More deterministic
-            vad_filter=True,  # Re-enable with GPU
+            beam_size=5,
+            best_of=5,
+            temperature=0,
+            vad_filter=True,
             vad_parameters=dict(
                 threshold=0.5,
                 min_silence_duration_ms=500,
@@ -128,7 +162,7 @@ def main():
     """Main function."""
     # Check arguments
     if len(sys.argv) < 2:
-        print("Usage: python speech_to_text_gpu.py <audio_file>")
+        print("Usage: python speech_to_text_gpu_fixed.py <audio_file>")
         sys.exit(1)
     
     audio_file = sys.argv[1]

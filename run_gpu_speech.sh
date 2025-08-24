@@ -1,0 +1,17 @@
+#!/bin/bash
+# Wrapper script to run GPU speech-to-text with proper CUDNN environment
+
+# Set up CUDNN library paths
+VENV_PATH="/home/sati/speech-to-text-for-ubuntu/venv"
+CUDNN_LIB="$VENV_PATH/lib/python3.10/site-packages/nvidia/cudnn/lib"
+CUBLAS_LIB="$VENV_PATH/lib/python3.10/site-packages/nvidia/cublas/lib"
+
+# Export library path
+export LD_LIBRARY_PATH="$CUDNN_LIB:$CUBLAS_LIB:$LD_LIBRARY_PATH"
+
+# Log the environment setup
+echo "$(date): GPU Speech wrapper starting" >> /tmp/gpu_wrapper.log
+echo "LD_LIBRARY_PATH: $LD_LIBRARY_PATH" >> /tmp/gpu_wrapper.log
+
+# Run the GPU speech script
+exec "$VENV_PATH/bin/python3" "/home/sati/speech-to-text-for-ubuntu/speech_to_text_gpu_fixed.py" "$@"
