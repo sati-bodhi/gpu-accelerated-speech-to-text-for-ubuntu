@@ -159,6 +159,37 @@ If you see `"Unable to load libcudnn_ops.so.9.1.0"`:
 - Check audio permissions and device access
 - Ensure `alsa-utils` is installed
 
+## Auto-Start on Login
+
+The system can automatically start the listener when you log in by adding it to your `.bashrc`:
+
+```bash
+# Start speech-to-text listener if not already running
+if ! pgrep -f "src/key_listener.py" > /dev/null; then
+    cd /home/sati/speech-to-text-for-ubuntu
+    nohup ./venv/bin/python3 src/key_listener.py > /tmp/speech_listener.log 2>&1 &
+    echo "Speech-to-text listener started"
+fi
+```
+
+This code:
+- ✅ Checks if listener is already running (prevents duplicates)
+- ✅ Starts in background with `nohup` (survives logout)
+- ✅ Logs output to `/tmp/speech_listener.log` for debugging
+- ✅ Works with any terminal or SSH session
+
+**Manual Controls:**
+```bash
+# Check if running
+pgrep -f "src/key_listener.py"
+
+# Stop listener
+pkill -f "src/key_listener.py"
+
+# View logs
+tail -f /tmp/speech_listener.log
+```
+
 ## Configuration
 
 ### Custom Key Binding
