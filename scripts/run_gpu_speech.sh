@@ -14,4 +14,4 @@ echo "$(date): GPU Speech wrapper starting" >> /tmp/gpu_wrapper.log
 echo "LD_LIBRARY_PATH: $LD_LIBRARY_PATH" >> /tmp/gpu_wrapper.log
 
 # Run the GPU speech script
-exec "$VENV_PATH/bin/python3" "/home/sati/speech-to-text-for-ubuntu/speech_to_text_gpu_fixed.py" "$@"
+exec "$VENV_PATH/bin/python3" "/home/sati/speech-to-text-for-ubuntu/src/gpu_service.py" "$@"

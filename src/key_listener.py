@@ -76,7 +76,7 @@ def stop_recording_and_process():
     logging.info("Running speech-to-text")
     try:
         subprocess.run([
-            "/home/sati/speech-to-text-for-ubuntu/run_gpu_speech.sh",
+            "/home/sati/speech-to-text-for-ubuntu/scripts/run_gpu_speech.sh",
             current_audio_file
         ], check=True)
         logging.info("Speech-to-text completed")
