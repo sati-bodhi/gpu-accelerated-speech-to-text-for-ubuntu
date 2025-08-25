@@ -69,6 +69,10 @@ class SessionSpeechDaemon:
         self.shutdown_requested = False
         self.activity_lock = threading.Lock()
         
+        # Safety mechanism for infinite loop detection
+        self.request_failure_count = {}
+        self.max_request_failures = 3
+        
         # Use simple, proven threshold
         self.calibrated_threshold = 0.2  # Aggressive but stable threshold
         
@@ -373,6 +377,16 @@ class SessionSpeechDaemon:
             request_id = request.get('id')
             request_type = request.get('type', 'transcribe')
             
+            # Safety check: detect infinite loops from repeated request failures
+            if request_id in self.request_failure_count:
+                self.request_failure_count[request_id] += 1
+                if self.request_failure_count[request_id] > self.max_request_failures:
+                    logging.error(f"Request {request_id} failed {self.max_request_failures} times - initiating emergency shutdown to prevent infinite loop")
+                    self.shutdown_requested = True
+                    return
+            else:
+                self.request_failure_count[request_id] = 0
+            
             logging.info(f"Processing session request {request_id} (type: {request_type})")
             
             # Handle ping requests for responsiveness testing
@@ -411,11 +425,21 @@ class SessionSpeechDaemon:
                     except Exception as e:
                         logging.warning(f"Typing failed: {e}")
             
+            # Clear failure count on successful completion
+            if request_id in self.request_failure_count:
+                del self.request_failure_count[request_id]
+            
             # Clean up request
             request_file.unlink()
             
         except Exception as e:
-            logging.error(f"Request processing failed: {e}")
+            # Track failure for infinite loop detection
+            if request_id and request_id not in self.request_failure_count:
+                self.request_failure_count[request_id] = 1
+            elif request_id:
+                self.request_failure_count[request_id] += 1
+                
+            logging.error(f"Request processing failed: {e} (failure #{self.request_failure_count.get(request_id, 1)})")
     
     def run(self):
         """Main daemon loop."""

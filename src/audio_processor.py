@@ -90,22 +90,22 @@ class AudioPreprocessor:
             )
             
             return AudioAnalysis(
-                duration=duration,
-                rms_level=rms_level,
-                peak_level=peak_level,
-                has_content=has_content,
-                sample_rate=sample_rate
+                duration=float(duration),
+                rms_level=float(rms_level),
+                peak_level=float(peak_level),
+                has_content=bool(has_content),
+                sample_rate=int(sample_rate)
             )
             
         except Exception as e:
             self.logger.warning(f"Audio analysis failed: {e}")
             # Return conservative defaults
             return AudioAnalysis(
-                duration=0.0,
-                rms_level=0.0,
-                peak_level=0.0,
-                has_content=False,
-                sample_rate=sample_rate
+                duration=float(0.0),
+                rms_level=float(0.0),
+                peak_level=float(0.0),
+                has_content=bool(False),
+                sample_rate=int(sample_rate)
             )
     
     def apply_noise_cancelling(self, audio: np.ndarray, sample_rate: int) -> np.ndarray:

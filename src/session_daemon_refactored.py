@@ -54,6 +54,11 @@ class SessionSpeechDaemon:
         self.session_coordinator = SessionCoordinator(session_timeout=session_timeout)
         self.text_output = TextOutputManager()
         
+        # Safety mechanism for infinite loop detection
+        self.request_failure_count = {}
+        self.max_request_failures = 3
+        self.shutdown_requested = False
+        
         # IPC directories
         self.request_dir = Path("/tmp/speech_session_requests")
         self.response_dir = Path("/tmp/speech_session_responses")
@@ -187,6 +192,16 @@ class SessionSpeechDaemon:
             request_id = request.get('id')
             request_type = request.get('type', 'transcribe')
             
+            # Safety check: detect infinite loops from repeated request failures
+            if request_id in self.request_failure_count:
+                self.request_failure_count[request_id] += 1
+                if self.request_failure_count[request_id] > self.max_request_failures:
+                    self.logger.error(f"Request {request_id} failed {self.max_request_failures} times - initiating emergency shutdown to prevent infinite loop")
+                    self.shutdown_requested = True
+                    return
+            else:
+                self.request_failure_count[request_id] = 0
+            
             self.logger.info(f"Processing {request_type} request {request_id}")
             
             # Handle ping requests for responsiveness testing
@@ -235,10 +250,20 @@ class SessionSpeechDaemon:
             # Clean up request
             request_file.unlink()
             
+            # Clear failure count on successful completion
+            if request_id in self.request_failure_count:
+                del self.request_failure_count[request_id]
+            
             self.logger.info(f"Request {request_id} completed successfully")
             
         except Exception as e:
-            self.logger.error(f"Request processing failed: {e}")
+            # Track failure for infinite loop detection
+            if request_id and request_id not in self.request_failure_count:
+                self.request_failure_count[request_id] = 1
+            elif request_id:
+                self.request_failure_count[request_id] += 1
+                
+            self.logger.error(f"Request processing failed: {e} (failure #{self.request_failure_count.get(request_id, 1)})")
             
             # Try to write error response
             try:
@@ -276,16 +301,21 @@ class SessionSpeechDaemon:
         """Main daemon loop with modular service coordination."""
         self.logger.info("Modular session daemon started - waiting for requests...")
         
-        while self.session_coordinator.is_session_active():
+        while self.session_coordinator.is_session_active() and not self.shutdown_requested:
             try:
                 # Check for new requests
                 request_files = list(self.request_dir.glob("*.json"))
                 
                 for request_file in request_files:
-                    if not self.session_coordinator.is_session_active():
+                    if not self.session_coordinator.is_session_active() or self.shutdown_requested:
                         break
                     
                     self.process_request(request_file)
+                    
+                    # Additional safety check after processing
+                    if self.shutdown_requested:
+                        self.logger.error("Emergency shutdown triggered - terminating daemon")
+                        break
                 
                 # Brief pause between checks
                 time.sleep(0.1)

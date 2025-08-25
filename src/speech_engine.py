@@ -156,11 +156,11 @@ class SpeechEngine:
             if not self.load_model():
                 return TranscriptionResult(
                     segments=[],
-                    processing_time=0.0,
-                    device_used=self.device,
-                    model_size=self.model_size,
-                    success=False,
-                    error_message="Model loading failed"
+                    processing_time=float(0.0),
+                    device_used=str(self.device),
+                    model_size=str(self.model_size),
+                    success=bool(False),
+                    error_message=str("Model loading failed")
                 )
         
         try:
@@ -195,20 +195,20 @@ class SpeechEngine:
             
             return TranscriptionResult(
                 segments=results,
-                processing_time=processing_time,
-                device_used=self.device,
-                model_size=self.model_size,
-                success=True
+                processing_time=float(processing_time),
+                device_used=str(self.device),
+                model_size=str(self.model_size),
+                success=bool(True)
             )
             
         except Exception as e:
             self.logger.error(f"Transcription failed: {e}")
             return TranscriptionResult(
                 segments=[],
-                processing_time=0.0,
-                device_used=self.device,
-                model_size=self.model_size,
-                success=False,
+                processing_time=float(0.0),
+                device_used=str(self.device),
+                model_size=str(self.model_size),
+                success=bool(False),
                 error_message=str(e)
             )
     
