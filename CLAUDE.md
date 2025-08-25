@@ -6,17 +6,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is a GPU-accelerated speech-to-text system for Ubuntu that uses INSERT key recording and offline transcription with Faster Whisper models. The system records audio on key press/release and transcribes speech using AI models with CUDA acceleration for high-speed, high-accuracy transcription.
 
-## Hybrid Session Architecture with Audio Optimization
+## Modern Modular Architecture with Production Safety
 
-This system uses a hybrid session-based daemon architecture with advanced audio preprocessing for optimal speech recognition performance.
+This system uses a modern modular session-based daemon architecture with advanced audio preprocessing, built-in safety mechanisms, and optimal speech recognition performance.
 
 ### Directory Structure
 
 ```
 /home/sati/speech-to-text-for-ubuntu/
 ├── src/
-│   ├── session_daemon.py         # Session-aware speech daemon with VRAM management
-│   ├── session_daemon_refactored.py # Modular refactored daemon (recommended)
+│   ├── session_daemon.py         # Modern modular session daemon (production ready)
 │   ├── audio_processor.py        # Audio preprocessing and noise cancelling service
 │   ├── speech_engine.py          # Whisper speech recognition engine service
 │   ├── session_coordinator.py    # Session lifecycle and timeout management service  
@@ -34,19 +33,15 @@ This system uses a hybrid session-based daemon architecture with advanced audio 
 
 ### Core Components
 
-**Modular Session Daemon** (`src/session_daemon_refactored.py`) **[Recommended]**:
-- Clean separation of concerns using focused services
-- Thin orchestration layer for service coordination
-- AudioPreprocessor: Noise cancelling and content validation
-- SpeechEngine: Whisper model management and transcription
-- SessionCoordinator: Activity tracking and timeout management
-- TextOutputManager: Typing automation and correction handling
-
-**Original Session Daemon** (`src/session_daemon.py`):
-- Monolithic architecture with all concerns in one file
-- Session-aware speech processing with 10-minute auto-shutdown
-- Model persistence, noise cancelling, VAD optimization
-- CUDA-accelerated Faster Whisper large-v3 model
+**Modern Session Daemon** (`src/session_daemon.py`) **[Production Ready]**:
+- **Modular Architecture**: Clean separation of concerns using focused services
+- **Thin Orchestration**: Service coordination layer with minimal overhead
+- **AudioPreprocessor**: Noise cancelling, content validation, and JSON-safe audio analysis
+- **SpeechEngine**: Whisper model management with type-safe transcription results
+- **SessionCoordinator**: Activity tracking, timeout management, and session lifecycle
+- **TextOutputManager**: Typing automation and correction handling
+- **Built-in Safety**: Infinite loop protection and emergency shutdown mechanisms
+- **Enhanced Logging**: Rich metadata and comprehensive error tracking
 
 **Key Listener** (`src/key_listener.py`):
 - X11-compatible using pynput (no sudo required)
@@ -69,10 +64,11 @@ session daemon (with noise cancelling) → VAD-optimized transcription → pyaut
 ## Performance Characteristics
 
 ### Session Performance
-- **Initial Load**: 2.7s (model loading + VRAM allocation)
-- **Cached Processing**: <1s transcription (model stays loaded)
+- **Initial Load**: 2.2s (model loading + VRAM allocation)
+- **Cached Processing**: 0.024s transcription (model stays loaded)
 - **Session Timeout**: 10 minutes of inactivity before VRAM release
 - **Responsiveness**: Ping-pong testing prevents false daemon restarts
+- **Safety Protection**: Automatic shutdown after 3 consecutive request failures
 
 ### Audio Optimization Results
 - **Noise Cancelling**: High-pass filter (80Hz) + spectral subtraction
@@ -133,7 +129,7 @@ arecord -f S16_LE -r 16000 -c 1 -d 5 /tmp/ambient_test.wav
 
 ## Key Configuration Points
 
-### Critical VAD Settings (src/session_daemon.py:336-340)
+### Critical VAD Settings (src/speech_engine.py:VADParameters)
 ```python
 vad_parameters=dict(
     threshold=0.16,  # Just above early ambient RMS (0.159) for optimal speech detection
@@ -142,12 +138,23 @@ vad_parameters=dict(
 )
 ```
 
-### Noise Cancelling Implementation (src/session_daemon.py:125-175)
+### Noise Cancelling Implementation (src/audio_processor.py:apply_noise_cancelling)
 ```python
-def preprocess_audio(self, audio, sample_rate=16000):
+def apply_noise_cancelling(self, audio, sample_rate):
     # 1. High-pass filter (80Hz cutoff for AC hum/rumble removal)
-    # 2. Spectral subtraction (conservative noise reduction)
+    # 2. Spectral subtraction (conservative noise reduction)  
     # 3. Normalization (prevent clipping while preserving dynamics)
+    # 4. JSON-safe type conversion for serialization compatibility
+```
+
+### Safety Mechanisms (src/session_daemon.py:process_request)
+```python
+# Infinite loop protection with automatic shutdown
+if request_id in self.request_failure_count:
+    self.request_failure_count[request_id] += 1
+    if self.request_failure_count[request_id] > self.max_request_failures:
+        self.logger.error(f"Emergency shutdown - preventing infinite loop")
+        self.shutdown_requested = True
 ```
 
 ### Session Daemon Integration (src/key_listener.py:79)
@@ -190,11 +197,18 @@ Core dependencies with exact versions:
 - Check ping-pong test: Built into wrapper script
 - Manual status check: `cat /tmp/session_daemon_status.json`
 - Kill stale daemon: `pkill -f session_daemon.py`
+- Safety mechanism: Daemon auto-terminates after 3 consecutive failures
 
 **Memory/VRAM Problems**:
 - Session auto-shutdown: 10 minutes inactivity
 - Manual cleanup: Daemon releases VRAM on timeout
 - Monitor usage: `nvidia-smi` for GPU memory
+- Emergency protection: Prevents infinite loops from exhausting resources
+
+**JSON Serialization Errors** (Fixed in current version):
+- All data types converted to JSON-compatible Python natives
+- AudioAnalysis uses `float()`, `int()`, `bool()` conversions  
+- TranscriptionResult ensures type safety for all fields
 
 ### Key Listener Issues
 - Ensure X11 session is running (not Wayland)
@@ -215,12 +229,15 @@ git log --oneline -5  # View recent optimization commits
 
 ## Development Notes
 
-- **Session Architecture**: Hybrid daemon provides 3.6x speedup with model persistence
+- **Modern Architecture**: Modular daemon with service separation provides maintainability while preserving 3.6x speedup
 - **Audio Optimization**: Combined noise cancelling + VAD tuning achieved ~50% phoneme preservation improvement  
+- **Production Safety**: Built-in infinite loop protection and JSON serialization safety prevent system failures
 - **Hardware Analysis**: Consumer Realtek ALC257 codec identified as bottleneck
 - **Professional Upgrade Path**: $300-800 audio interface would provide 70-90% phoneme cutting reduction
 - **Critical Thresholds**: VAD 0.16 calibrated against ambient RMS 0.159 for optimal speech detection
-- **Processing Pipeline**: Noise cancelling → VAD filtering → CUDA transcription → pyautogui output
+- **Processing Pipeline**: JSON-safe audio preprocessing → VAD filtering → CUDA transcription → type-safe output
+- **Architectural Evolution**: Transformed from monolithic (519 lines) to modular (343 lines + services) architecture
+- **Legacy Access**: Original daemon available via git history (commit 223c183) if needed for reference
 
 ## Architecture History
 
