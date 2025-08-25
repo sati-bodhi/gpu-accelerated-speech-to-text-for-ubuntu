@@ -24,11 +24,15 @@ This system uses a modern modular session-based daemon architecture with advance
 ├── scripts/
 │   ├── run_gpu_speech_session.sh # Hybrid session wrapper with ping-pong testing
 │   └── type_correction.py        # LLM correction output helper
+├── docs/                          # Documentation directory
+│   ├── ARCHITECTURE.md           # System architecture overview
+│   ├── ARCHITECTURE_ANALYSIS.md  # Technical analysis and history
+│   ├── DEVELOPMENT_SUMMARY.md    # Development timeline and decisions
+│   ├── LICENSE.md                # MIT License
+│   └── SESSION_API.md            # Session daemon API documentation
 ├── requirements.txt               # Locked dependencies (scipy, faster-whisper, etc.)
 ├── README.md                     # User documentation  
-├── CLAUDE.md                     # Development guidance (this file)
-├── ARCHITECTURE_ANALYSIS.md      # Technical analysis and history
-└── LICENSE.md                    # MIT License
+└── CLAUDE.md                     # Development guidance (this file)
 ```
 
 ### Core Components
@@ -241,8 +245,15 @@ git log --oneline -5  # View recent optimization commits
 
 ## Architecture History
 
-See `ARCHITECTURE_ANALYSIS.md` for detailed technical analysis including:
+See `docs/ARCHITECTURE_ANALYSIS.md` for detailed technical analysis including:
 - Token consumption optimization attempts  
 - Failed architecture experiments and reasons
 - Performance comparisons between approaches
 - Lessons learned from the development process
+
+## Additional Documentation
+
+- **`docs/ARCHITECTURE.md`**: High-level system architecture overview
+- **`docs/DEVELOPMENT_SUMMARY.md`**: Complete development timeline and decisions
+- **`docs/SESSION_API.md`**: Session daemon API and IPC documentation
+- **`docs/LICENSE.md`**: MIT License terms and conditions
