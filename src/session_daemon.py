@@ -333,7 +333,7 @@ class SessionSpeechDaemon:
                 temperature=0,
                 vad_filter=True,
                 vad_parameters=dict(
-                    threshold=0.18,  # Even more aggressive threshold for phoneme preservation
+                    threshold=0.16,  # Just above early ambient RMS (0.159) for optimal speech detection
                     min_silence_duration_ms=500,
                     min_speech_duration_ms=100
                 )
