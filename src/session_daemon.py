@@ -39,6 +39,8 @@ try:
     import pyautogui
     import soundfile as sf
     from faster_whisper import WhisperModel
+    from scipy import signal
+    from scipy.fft import fft, ifft
 except ImportError as e:
     print(f"Required library missing: {e}")
     sys.exit(1)
@@ -119,6 +121,49 @@ class SessionSpeechDaemon:
         except Exception as e:
             logging.info(f"Device detection: using CPU (nvidia-smi failed: {e})")
             self.device = "cpu"
+    
+    def preprocess_audio(self, audio, sample_rate=16000):
+        """Apply simple noise cancelling to improve audio quality."""
+        try:
+            # 1. High-pass filter to remove low-frequency noise (AC hum, rumble)
+            # Cutoff at 80Hz to preserve speech while removing most environmental noise
+            nyquist = sample_rate / 2
+            high_cutoff = 80 / nyquist
+            b, a = signal.butter(4, high_cutoff, btype='high')
+            audio = signal.filtfilt(b, a, audio)
+            
+            # 2. Simple spectral subtraction for background noise reduction
+            # Estimate noise from first 0.2 seconds (assumed to be relatively quiet)
+            noise_samples = min(int(0.2 * sample_rate), len(audio) // 4)
+            if noise_samples > 100:  # Only if we have enough samples
+                noise_spectrum = np.abs(fft(audio[:noise_samples]))
+                noise_power = np.mean(noise_spectrum)
+                
+                # Apply spectral subtraction with conservative alpha
+                audio_fft = fft(audio)
+                audio_magnitude = np.abs(audio_fft)
+                audio_phase = np.angle(audio_fft)
+                
+                # Subtract estimated noise (conservative factor to avoid artifacts)
+                alpha = 1.5  # Noise reduction factor
+                cleaned_magnitude = audio_magnitude - alpha * noise_power
+                cleaned_magnitude = np.maximum(cleaned_magnitude, 0.1 * audio_magnitude)  # Floor
+                
+                # Reconstruct audio
+                cleaned_fft = cleaned_magnitude * np.exp(1j * audio_phase)
+                audio = np.real(ifft(cleaned_fft))
+            
+            # 3. Normalize to prevent clipping but preserve dynamics
+            max_val = np.max(np.abs(audio))
+            if max_val > 0:
+                audio = audio * (0.95 / max_val)
+                
+            logging.info("Applied noise cancelling: high-pass filter + spectral subtraction")
+            return audio.astype(np.float32)
+            
+        except Exception as e:
+            logging.warning(f"Noise cancelling failed, using original audio: {e}")
+            return audio
     
     def load_model_on_demand(self):
         """Load model only when first needed."""
@@ -256,6 +301,9 @@ class SessionSpeechDaemon:
             
             if len(audio.shape) > 1:
                 audio = np.mean(audio, axis=1)
+            
+            # Apply noise cancelling preprocessing
+            audio = self.preprocess_audio(audio, sample_rate)
             
             # Pre-filter empty audio
             if not self.check_audio_content(audio, sample_rate):
