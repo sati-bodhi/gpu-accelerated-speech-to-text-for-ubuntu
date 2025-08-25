@@ -37,8 +37,14 @@ setup_cuda_env()
 try:
     import numpy as np
     import pyautogui
+    import pyperclip
     import soundfile as sf
     from faster_whisper import WhisperModel
+    
+    # Configure pyautogui for reliable operations
+    pyautogui.PAUSE = 0.02  # 20ms delay between operations for reliability
+    pyautogui.FAILSAFE = True  # Enable failsafe (move mouse to corner to abort)
+    
 except ImportError as e:
     print(f"Required library missing: {e}")
     sys.exit(1)
@@ -271,12 +277,7 @@ class SessionSpeechDaemon:
                 beam_size=5,
                 best_of=5,
                 temperature=0,
-                vad_filter=True,
-                vad_parameters=dict(
-                    threshold=0.5,
-                    min_silence_duration_ms=500,
-                    min_speech_duration_ms=250
-                )
+                vad_filter=False  # Disabled for testing - VAD was cutting first words
             )
             
             # Extract results
@@ -331,9 +332,11 @@ class SessionSpeechDaemon:
             with open(response_file, 'w') as f:
                 json.dump(response, f)
             
-            # Auto-type results
+            # Auto-type results with reliable timing
             for text in results:
                 try:
+                    # Brief delay to ensure stable window focus
+                    time.sleep(0.05)
                     pyautogui.typewrite(text + ' ')
                     logging.info(f"Typed: {text}")
                 except Exception as e:
