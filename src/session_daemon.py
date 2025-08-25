@@ -39,7 +39,7 @@ try:
     import pyautogui
     import soundfile as sf
     from faster_whisper import WhisperModel
-    from scipy import signal
+    from scipy import signal as scipy_signal
     from scipy.fft import fft, ifft
 except ImportError as e:
     print(f"Required library missing: {e}")
@@ -129,8 +129,8 @@ class SessionSpeechDaemon:
             # Cutoff at 80Hz to preserve speech while removing most environmental noise
             nyquist = sample_rate / 2
             high_cutoff = 80 / nyquist
-            b, a = signal.butter(4, high_cutoff, btype='high')
-            audio = signal.filtfilt(b, a, audio)
+            b, a = scipy_signal.butter(4, high_cutoff, btype='high')
+            audio = scipy_signal.filtfilt(b, a, audio)
             
             # 2. Simple spectral subtraction for background noise reduction
             # Estimate noise from first 0.2 seconds (assumed to be relatively quiet)
