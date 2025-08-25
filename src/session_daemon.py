@@ -159,6 +159,15 @@ class SessionSpeechDaemon:
                 audio = audio * (0.95 / max_val)
                 
             logging.info("Applied noise cancelling: high-pass filter + spectral subtraction")
+            
+            # Save processed audio for playback testing (optional)
+            debug_file = "/tmp/processed_audio_debug.wav"
+            try:
+                sf.write(debug_file, audio, sample_rate)
+                logging.info(f"Saved processed audio to {debug_file} for playback testing")
+            except Exception as e:
+                logging.warning(f"Could not save debug audio: {e}")
+                
             return audio.astype(np.float32)
             
         except Exception as e:
@@ -324,7 +333,7 @@ class SessionSpeechDaemon:
                 temperature=0,
                 vad_filter=True,
                 vad_parameters=dict(
-                    threshold=0.2,  # Simple, proven aggressive threshold
+                    threshold=0.18,  # Even more aggressive threshold for phoneme preservation
                     min_silence_duration_ms=500,
                     min_speech_duration_ms=100
                 )
