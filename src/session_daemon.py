@@ -273,7 +273,7 @@ class SessionSpeechDaemon:
                 temperature=0,
                 vad_filter=True,
                 vad_parameters=dict(
-                    threshold=0.5,
+                    threshold=0.4,  # Lowered for better initial phoneme detection
                     min_silence_duration_ms=500,
                     min_speech_duration_ms=250
                 )
