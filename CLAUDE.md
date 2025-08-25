@@ -26,7 +26,7 @@ This system uses a modern modular session-based daemon architecture with advance
 │   └── type_correction.py        # LLM correction output helper
 ├── docs/                          # Documentation directory
 │   ├── ARCHITECTURE.md           # System architecture overview
-│   ├── ARCHITECTURE_ANALYSIS.md  # Technical analysis and history
+│   ├── DEVELOPMENT_DECISIONS.md  # Technical decisions and rationale
 │   ├── DEVELOPMENT_SUMMARY.md    # Development timeline and decisions
 │   ├── LICENSE.md                # MIT License
 │   └── SESSION_API.md            # Session daemon API documentation
@@ -245,7 +245,7 @@ git log --oneline -5  # View recent optimization commits
 
 ## Architecture History
 
-See `docs/ARCHITECTURE_ANALYSIS.md` for detailed technical analysis including:
+See `docs/DEVELOPMENT_DECISIONS.md` for detailed technical analysis including:
 - Token consumption optimization attempts  
 - Failed architecture experiments and reasons
 - Performance comparisons between approaches
@@ -254,6 +254,7 @@ See `docs/ARCHITECTURE_ANALYSIS.md` for detailed technical analysis including:
 ## Additional Documentation
 
 - **`docs/ARCHITECTURE.md`**: High-level system architecture overview
+- **`docs/DEVELOPMENT_DECISIONS.md`**: Technical decisions and architectural rationale
 - **`docs/DEVELOPMENT_SUMMARY.md`**: Complete development timeline and decisions
 - **`docs/SESSION_API.md`**: Session daemon API and IPC documentation
 - **`docs/LICENSE.md`**: MIT License terms and conditions

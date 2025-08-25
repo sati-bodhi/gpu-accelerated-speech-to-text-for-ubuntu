@@ -1,4 +1,4 @@
-# Speech-to-Text Architecture Analysis & Issues Documentation
+# Development Decisions & Technical Rationale
 
 ## Overview
 
