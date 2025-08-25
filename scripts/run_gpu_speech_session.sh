@@ -86,22 +86,50 @@ check_daemon_status() {
         return 1
     fi
     
-    # Check if daemon is responsive using Python
+    # Test daemon responsiveness with ping-pong
     python3 -c "
-import json, time, sys
+import json, time, sys, os
 try:
+    # Check if status file exists and daemon claims to be active
     with open('$STATUS_FILE') as f:
         status = json.load(f)
     
-    # Check if daemon is active and responsive (within 60s)
     if not status.get('active', False):
         sys.exit(1)
     
-    timestamp = status.get('timestamp', 0)
-    if time.time() - timestamp > 300:  # 5 minutes tolerance
-        sys.exit(1)  # Daemon seems stale
-        
-    print(f'Daemon status: model_loaded={status.get(\"model_loaded\", False)}, device={status.get(\"device\", \"unknown\")}')
+    # Send ping request to test actual responsiveness
+    ping_id = f'ping_{int(time.time() * 1000000)}'
+    ping_request = {
+        'id': ping_id,
+        'type': 'ping',
+        'timestamp': time.time()
+    }
+    
+    # Write ping request
+    with open(f'$REQUEST_DIR/{ping_id}.json', 'w') as f:
+        json.dump(ping_request, f)
+    
+    # Wait for pong response (max 2 seconds)
+    for i in range(20):  # 20 * 0.1s = 2s timeout
+        response_file = f'$RESPONSE_DIR/{ping_id}.json'
+        if os.path.exists(response_file):
+            with open(response_file) as f:
+                response = json.load(f)
+            if response.get('type') == 'pong':
+                os.unlink(response_file)  # Clean up
+                print(f'Daemon status: model_loaded={status.get(\"model_loaded\", False)}, device={status.get(\"device\", \"unknown\")}')
+                sys.exit(0)
+            break
+        time.sleep(0.1)
+    
+    # Clean up ping request if still exists
+    try:
+        os.unlink(f'$REQUEST_DIR/{ping_id}.json')
+    except:
+        pass
+    
+    # No pong received - daemon unresponsive
+    sys.exit(1)
     
 except Exception as e:
     sys.exit(1)

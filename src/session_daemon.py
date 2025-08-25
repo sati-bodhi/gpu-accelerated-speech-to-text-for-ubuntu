@@ -310,34 +310,46 @@ class SessionSpeechDaemon:
             with open(request_file, 'r') as f:
                 request = json.load(f)
             
-            audio_file = request.get('audio_file')
             request_id = request.get('id')
+            request_type = request.get('type', 'transcribe')
             
-            logging.info(f"Processing session request {request_id}")
+            logging.info(f"Processing session request {request_id} (type: {request_type})")
             
-            # Transcribe
-            results = self.transcribe_audio(audio_file)
-            
-            # Write response
-            response = {
-                'id': request_id,
-                'results': results,
-                'timestamp': time.time(),
-                'device': self.device,
-                'session_active': self.is_model_loaded
-            }
+            # Handle ping requests for responsiveness testing
+            if request_type == 'ping':
+                logging.info(f"Ping request received: {request_id}")
+                response = {
+                    'id': request_id,
+                    'type': 'pong',
+                    'timestamp': time.time(),
+                    'device': self.device,
+                    'session_active': self.is_model_loaded
+                }
+            else:
+                # Handle normal transcription requests
+                audio_file = request.get('audio_file')
+                results = self.transcribe_audio(audio_file)
+                
+                response = {
+                    'id': request_id,
+                    'results': results,
+                    'timestamp': time.time(),
+                    'device': self.device,
+                    'session_active': self.is_model_loaded
+                }
             
             response_file = self.response_dir / f"{request_id}.json"
             with open(response_file, 'w') as f:
                 json.dump(response, f)
             
-            # Auto-type results
-            for text in results:
-                try:
-                    pyautogui.typewrite(text + ' ')
-                    logging.info(f"Typed: {text}")
-                except Exception as e:
-                    logging.warning(f"Typing failed: {e}")
+            # Auto-type results (skip for ping requests)
+            if request_type != 'ping' and 'results' in response:
+                for text in response['results']:
+                    try:
+                        pyautogui.typewrite(text + ' ')
+                        logging.info(f"Typed: {text}")
+                    except Exception as e:
+                        logging.warning(f"Typing failed: {e}")
             
             # Clean up request
             request_file.unlink()
