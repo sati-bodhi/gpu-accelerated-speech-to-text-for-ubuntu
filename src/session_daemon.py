@@ -67,6 +67,11 @@ class SessionSpeechDaemon:
         self.shutdown_requested = False
         self.activity_lock = threading.Lock()
         
+        # Audio calibration variables
+        self.baseline_rms = None
+        self.speech_contrast_data = []
+        self.calibrated_threshold = 0.2  # Default fallback
+        
         # IPC paths
         self.request_dir = Path("/tmp/speech_session_requests")
         self.response_dir = Path("/tmp/speech_session_responses")
@@ -76,6 +81,7 @@ class SessionSpeechDaemon:
         
         self.setup_directories()
         self.initialize_cuda_context()
+        self.collect_baseline_rms()
         
         # Start session monitor thread
         self.monitor_thread = threading.Thread(target=self.monitor_session_timeout, daemon=True)
@@ -116,6 +122,95 @@ class SessionSpeechDaemon:
         except Exception as e:
             logging.info(f"Device detection: using CPU (nvidia-smi failed: {e})")
             self.device = "cpu"
+    
+    def collect_baseline_rms(self):
+        """Collect baseline ambient RMS level for calibration."""
+        try:
+            logging.info("Collecting baseline ambient RMS level...")
+            
+            # Record 3 seconds of ambient sound
+            ambient_file = "/tmp/ambient_baseline.wav"
+            import subprocess
+            result = subprocess.run([
+                "arecord", "-f", "S16_LE", "-r", "16000", "-c", "1", 
+                "-d", "3", ambient_file
+            ], capture_output=True, text=True, timeout=10)
+            
+            if result.returncode != 0:
+                logging.warning(f"Ambient recording failed: {result.stderr}")
+                self.baseline_rms = 0.01  # Conservative fallback
+                return
+            
+            # Analyze the ambient audio
+            audio, sample_rate = sf.read(ambient_file)
+            if len(audio.shape) > 1:
+                audio = np.mean(audio, axis=1)
+            
+            self.baseline_rms = np.sqrt(np.mean(audio**2))
+            
+            # Set initial calibrated threshold with reasonable buffer
+            buffer_multiplier = 2.0  # Start conservative
+            self.calibrated_threshold = max(0.1, self.baseline_rms * buffer_multiplier)
+            
+            logging.info(f"Baseline ambient RMS: {self.baseline_rms:.6f}")
+            logging.info(f"Initial calibrated threshold: {self.calibrated_threshold:.3f}")
+            
+            # Clean up
+            Path(ambient_file).unlink(missing_ok=True)
+            
+        except Exception as e:
+            logging.error(f"Baseline RMS collection failed: {e}")
+            self.baseline_rms = 0.01
+            self.calibrated_threshold = 0.2
+    
+    def analyze_speech_contrast(self, audio):
+        """Analyze speech levels vs baseline for dynamic calibration."""
+        try:
+            if self.baseline_rms is None:
+                return
+            
+            # Calculate RMS of this audio segment
+            speech_rms = np.sqrt(np.mean(audio**2))
+            
+            # Only analyze if speech is significantly above baseline
+            if speech_rms > self.baseline_rms * 1.2:  # 20% above baseline
+                contrast_ratio = speech_rms / self.baseline_rms
+                self.speech_contrast_data.append({
+                    'speech_rms': speech_rms,
+                    'contrast_ratio': contrast_ratio,
+                    'timestamp': time.time()
+                })
+                
+                # Keep only recent data (last 10 measurements)
+                self.speech_contrast_data = self.speech_contrast_data[-10:]
+                
+                # Recalibrate threshold based on collected data
+                self.update_calibrated_threshold()
+                
+        except Exception as e:
+            logging.warning(f"Speech contrast analysis failed: {e}")
+    
+    def update_calibrated_threshold(self):
+        """Update VAD threshold based on speech contrast analysis."""
+        if not self.speech_contrast_data or self.baseline_rms is None:
+            return
+        
+        # Calculate average contrast ratio
+        avg_contrast = np.mean([d['contrast_ratio'] for d in self.speech_contrast_data])
+        
+        # Set threshold to be halfway between baseline and typical speech level
+        # This ensures we catch soft phonemes while avoiding ambient noise
+        safety_buffer = 1.5  # 50% buffer above baseline
+        new_threshold = self.baseline_rms * safety_buffer
+        
+        # Don't make threshold too sensitive or too aggressive
+        new_threshold = max(0.05, min(0.4, new_threshold))
+        
+        if abs(new_threshold - self.calibrated_threshold) > 0.02:  # Significant change
+            old_threshold = self.calibrated_threshold
+            self.calibrated_threshold = new_threshold
+            logging.info(f"Calibrated threshold updated: {old_threshold:.3f} → {new_threshold:.3f}")
+            logging.info(f"Based on {len(self.speech_contrast_data)} samples, avg contrast: {avg_contrast:.1f}x")
     
     def load_model_on_demand(self):
         """Load model only when first needed."""
@@ -254,6 +349,9 @@ class SessionSpeechDaemon:
             if len(audio.shape) > 1:
                 audio = np.mean(audio, axis=1)
             
+            # Analyze speech-to-ambient contrast for calibration
+            self.analyze_speech_contrast(audio)
+            
             # Pre-filter empty audio
             if not self.check_audio_content(audio, sample_rate):
                 logging.info("Skipping empty audio - session extended")
@@ -273,7 +371,7 @@ class SessionSpeechDaemon:
                 temperature=0,
                 vad_filter=True,
                 vad_parameters=dict(
-                    threshold=0.2,  # Aggressive threshold for phoneme preservation
+                    threshold=self.calibrated_threshold,  # Dynamic threshold based on ambient calibration
                     min_silence_duration_ms=500,
                     min_speech_duration_ms=100
                 )
