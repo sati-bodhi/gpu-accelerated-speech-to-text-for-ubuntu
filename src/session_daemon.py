@@ -1,7 +1,14 @@
 #!/usr/bin/env python3
 """
-Session-Based Speech Daemon with Auto-Shutdown
-Keeps model loaded during active sessions, releases VRAM when idle
+Refactored Session-Based Speech Daemon
+
+Clean, modular architecture using separated services for:
+- Audio preprocessing (AudioPreprocessor)
+- Model management (ModelManager) 
+- Session coordination (SessionCoordinator)
+- Text output (TextOutputManager)
+
+This daemon now serves as a thin orchestration layer.
 """
 
 import os
@@ -9,41 +16,15 @@ import sys
 import time
 import json
 import logging
-import threading
-from pathlib import Path
 import signal
-import queue
+from pathlib import Path
+from typing import Optional, Dict, Any
 
-# Set up CUDA environment before imports
-def setup_cuda_env():
-    """Set up CUDA environment variables."""
-    try:
-        venv_path = os.path.dirname(os.path.dirname(sys.executable))
-        cudnn_lib_path = os.path.join(venv_path, 'lib/python3.10/site-packages/nvidia/cudnn/lib')
-        cublas_lib_path = os.path.join(venv_path, 'lib/python3.10/site-packages/nvidia/cublas/lib')
-        
-        current_path = os.environ.get('LD_LIBRARY_PATH', '')
-        new_paths = [cudnn_lib_path, cublas_lib_path]
-        if current_path:
-            new_paths.append(current_path)
-        os.environ['LD_LIBRARY_PATH'] = ':'.join(new_paths)
-        return True
-    except Exception as e:
-        print(f"CUDA setup failed: {e}")
-        return False
-
-setup_cuda_env()
-
-try:
-    import numpy as np
-    import pyautogui
-    import soundfile as sf
-    from faster_whisper import WhisperModel
-    from scipy import signal as scipy_signal
-    from scipy.fft import fft, ifft
-except ImportError as e:
-    print(f"Required library missing: {e}")
-    sys.exit(1)
+# Import our modular services
+from audio_processor import AudioPreprocessor
+from speech_engine import SpeechEngine
+from session_coordinator import SessionCoordinator, SessionTimeoutMonitor
+from text_output import TextOutputManager
 
 # Setup logging
 logging.basicConfig(
@@ -55,321 +36,155 @@ logging.basicConfig(
     ]
 )
 
+
 class SessionSpeechDaemon:
-    """Session-aware speech daemon with smart VRAM management."""
+    """
+    Refactored session-aware speech daemon with modular architecture.
     
-    def __init__(self, session_timeout=600):  # 10 minutes default
-        self.model = None
-        self.device = None
-        self.model_size = "large-v3"
-        self.is_model_loaded = False
-        self.last_activity = time.time()
-        self.session_timeout = session_timeout
-        self.processing = False
-        self.shutdown_requested = False
-        self.activity_lock = threading.Lock()
+    This daemon now acts as a thin coordination layer orchestrating
+    specialized services for different concerns.
+    """
+    
+    def __init__(self, session_timeout: int = 600):
+        self.logger = logging.getLogger(__name__)
+        
+        # Initialize modular services
+        self.audio_processor = AudioPreprocessor(enable_debug=True)
+        self.speech_engine = SpeechEngine(model_size="large-v3", vad_threshold=0.16)
+        self.session_coordinator = SessionCoordinator(session_timeout=session_timeout)
+        self.text_output = TextOutputManager()
         
         # Safety mechanism for infinite loop detection
         self.request_failure_count = {}
         self.max_request_failures = 3
+        self.shutdown_requested = False
         
-        # Use simple, proven threshold
-        self.calibrated_threshold = 0.2  # Aggressive but stable threshold
-        
-        # IPC paths
+        # IPC directories
         self.request_dir = Path("/tmp/speech_session_requests")
         self.response_dir = Path("/tmp/speech_session_responses")
-        self.status_file = Path("/tmp/session_daemon_status.json")
-        self.session_file = Path("/tmp/session_daemon_active")
-        self.pid_file = Path("/tmp/session_daemon.pid")
         
-        self.setup_directories()
-        self.initialize_cuda_context()
+        self._setup_ipc_directories()
         
-        # Start session monitor thread
-        self.monitor_thread = threading.Thread(target=self.monitor_session_timeout, daemon=True)
-        self.monitor_thread.start()
+        # Start session timeout monitoring
+        self.timeout_monitor = SessionTimeoutMonitor(self.session_coordinator)
+        self.timeout_monitor.start_monitoring()
         
-        self.update_status()
+        # Update status with all service information
+        self._update_status()
+        
+        self.logger.info("Modular session speech daemon initialized")
+        self.logger.info(f"Services: Audio={type(self.audio_processor).__name__}, "
+                        f"Speech={type(self.speech_engine).__name__}, "
+                        f"Session={type(self.session_coordinator).__name__}, "
+                        f"Output={type(self.text_output).__name__}")
     
-    def setup_directories(self):
-        """Create necessary directories for IPC."""
-        self.request_dir.mkdir(exist_ok=True)
-        self.response_dir.mkdir(exist_ok=True)
-        
-        # Create PID file for single-instance protection
-        with open(self.pid_file, 'w') as f:
-            f.write(str(os.getpid()))
-        
-        # Create session marker file
-        with open(self.session_file, 'w') as f:
-            json.dump({
-                "started": time.time(),
-                "pid": os.getpid()
-            }, f)
-        
-        logging.info(f"Session daemon directories ready (PID: {os.getpid()})")
-    
-    def initialize_cuda_context(self):
-        """Initialize device selection for model loading."""
+    def _setup_ipc_directories(self):
+        """Set up IPC directories for request/response communication."""
         try:
-            # Simple CUDA detection via nvidia-smi
-            import subprocess
-            result = subprocess.run(['nvidia-smi'], capture_output=True, text=True)
-            if result.returncode == 0:
-                self.device = "cuda"
-                logging.info("CUDA device detected")
-            else:
-                self.device = "cpu" 
-                logging.info("CUDA not available, using CPU")
+            self.request_dir.mkdir(exist_ok=True)
+            self.response_dir.mkdir(exist_ok=True)
+            self.logger.info("IPC directories ready")
         except Exception as e:
-            logging.info(f"Device detection: using CPU (nvidia-smi failed: {e})")
-            self.device = "cpu"
+            self.logger.error(f"IPC setup failed: {e}")
+            raise
     
-    def preprocess_audio(self, audio, sample_rate=16000):
-        """Apply simple noise cancelling to improve audio quality."""
+    def _update_status(self):
+        """Update daemon status using session coordinator."""
         try:
-            # 1. High-pass filter to remove low-frequency noise (AC hum, rumble)
-            # Cutoff at 80Hz to preserve speech while removing most environmental noise
-            nyquist = sample_rate / 2
-            high_cutoff = 80 / nyquist
-            b, a = scipy_signal.butter(4, high_cutoff, btype='high')
-            audio = scipy_signal.filtfilt(b, a, audio)
+            # Gather status from all services
+            additional_data = {
+                "model_loaded": self.speech_engine.is_model_loaded,
+                "device": self.speech_engine.device,
+                "model_size": self.speech_engine.model_size,
+                "vad_threshold": self.speech_engine.get_vad_parameters().threshold,
+                "audio_debug_enabled": self.audio_processor.enable_debug,
+                "text_output_available": self.text_output.is_output_available()
+            }
             
-            # 2. Simple spectral subtraction for background noise reduction
-            # Estimate noise from first 0.2 seconds (assumed to be relatively quiet)
-            noise_samples = min(int(0.2 * sample_rate), len(audio) // 4)
-            if noise_samples > 100:  # Only if we have enough samples
-                noise_spectrum = np.abs(fft(audio[:noise_samples]))
-                noise_power = np.mean(noise_spectrum)
-                
-                # Apply spectral subtraction with conservative alpha
-                audio_fft = fft(audio)
-                audio_magnitude = np.abs(audio_fft)
-                audio_phase = np.angle(audio_fft)
-                
-                # Subtract estimated noise (conservative factor to avoid artifacts)
-                alpha = 1.5  # Noise reduction factor
-                cleaned_magnitude = audio_magnitude - alpha * noise_power
-                cleaned_magnitude = np.maximum(cleaned_magnitude, 0.1 * audio_magnitude)  # Floor
-                
-                # Reconstruct audio
-                cleaned_fft = cleaned_magnitude * np.exp(1j * audio_phase)
-                audio = np.real(ifft(cleaned_fft))
-            
-            # 3. Normalize to prevent clipping but preserve dynamics
-            max_val = np.max(np.abs(audio))
-            if max_val > 0:
-                audio = audio * (0.95 / max_val)
-                
-            logging.info("Applied noise cancelling: high-pass filter + spectral subtraction")
-            
-            # Save processed audio for playback testing (optional)
-            debug_file = "/tmp/processed_audio_debug.wav"
-            try:
-                sf.write(debug_file, audio, sample_rate)
-                logging.info(f"Saved processed audio to {debug_file} for playback testing")
-            except Exception as e:
-                logging.warning(f"Could not save debug audio: {e}")
-                
-            return audio.astype(np.float32)
+            self.session_coordinator.update_status_file(additional_data)
             
         except Exception as e:
-            logging.warning(f"Noise cancelling failed, using original audio: {e}")
-            return audio
+            self.logger.warning(f"Status update failed: {e}")
     
-    def load_model_on_demand(self):
-        """Load model only when first needed."""
-        if self.is_model_loaded:
-            logging.info("Using cached model from session")
-            return True
+    def transcribe_audio_file(self, audio_file: str) -> Dict[str, Any]:
+        """
+        Complete audio processing pipeline using modular services.
+        
+        Returns:
+            Dict with transcription results and processing metadata
+        """
+        # Update activity to extend session
+        self.session_coordinator.update_activity()
+        self.session_coordinator.set_processing(True)
         
         try:
-            logging.info(f"Loading {self.model_size} model for new session...")
-            start_time = time.time()
+            # Step 1: Audio preprocessing
+            self.logger.info("Processing audio with noise cancelling...")
+            processed_audio = self.audio_processor.process_audio_file(audio_file)
             
-            if self.device == "cuda":
-                self.model = WhisperModel(
-                    self.model_size,
-                    device=self.device,
-                    compute_type="float16"
-                )
-            else:
-                self.model = WhisperModel(
-                    self.model_size,
-                    device=self.device,
-                    compute_type="int8"
-                )
+            # Check if audio has content
+            if not processed_audio.analysis.has_content:
+                self.logger.info("Skipping transcription - no audio content detected")
+                return {
+                    "success": True,
+                    "results": [],
+                    "reason": "no_content",
+                    "audio_analysis": processed_audio.analysis.__dict__
+                }
             
-            load_time = time.time() - start_time
-            self.is_model_loaded = True
-            
-            logging.info(f"Model loaded in {load_time:.2f}s - SESSION ACTIVE")
-            logging.info(f"Model will stay loaded for {self.session_timeout/60:.1f}min of activity")
-            
-            return True
-            
-        except Exception as e:
-            logging.error(f"Model loading failed: {e}")
-            return False
-    
-    def update_activity(self):
-        """Update last activity timestamp and extend session."""
-        with self.activity_lock:
-            self.last_activity = time.time()
-            
-    def monitor_session_timeout(self):
-        """Monitor for session inactivity and auto-shutdown."""
-        logging.info(f"Session monitor started (timeout: {self.session_timeout}s)")
-        
-        while not self.shutdown_requested:
-            try:
-                with self.activity_lock:
-                    inactive_time = time.time() - self.last_activity
-                
-                if inactive_time > self.session_timeout and self.is_model_loaded:
-                    logging.info(f"Session inactive for {inactive_time:.1f}s, shutting down...")
-                    self.shutdown_session()
-                    break
-                
-                # Check every 30 seconds
-                time.sleep(30)
-                
-            except Exception as e:
-                logging.error(f"Session monitor error: {e}")
-                time.sleep(60)
-    
-    def shutdown_session(self):
-        """Gracefully shutdown and release VRAM."""
-        logging.info("Shutting down session daemon...")
-        
-        if self.is_model_loaded and self.model:
-            del self.model
-            self.model = None
-            self.is_model_loaded = False
-            logging.info("Model unloaded, VRAM released back to system")
-        
-        # Clean up session files
-        try:
-            if self.pid_file.exists():
-                self.pid_file.unlink()
-            if self.session_file.exists():
-                self.session_file.unlink()
-            if self.status_file.exists():
-                self.status_file.unlink()
-        except Exception:
-            pass
-        
-        self.shutdown_requested = True
-        logging.info("Session daemon shutdown complete")
-    
-    def update_status(self):
-        """Update daemon status file."""
-        status = {
-            "active": not self.shutdown_requested,
-            "model_loaded": self.is_model_loaded,
-            "device": self.device,
-            "model_size": self.model_size,
-            "processing": self.processing,
-            "last_activity": self.last_activity,
-            "session_timeout": self.session_timeout,
-            "timestamp": time.time(),
-            "pid": os.getpid()
-        }
-        
-        try:
-            with open(self.status_file, 'w') as f:
-                json.dump(status, f)
-        except Exception as e:
-            logging.warning(f"Failed to update status: {e}")
-    
-    def check_audio_content(self, audio, sample_rate):
-        """Fast pre-filter for empty audio."""
-        try:
-            duration = len(audio) / sample_rate
-            if duration < 0.15:
-                return False
-                
-            rms_level = np.sqrt(np.mean(audio**2))
-            if rms_level < 0.0005:
-                return False
-                
-            return True
-            
-        except Exception:
-            return True
-    
-    def transcribe_audio(self, audio_file):
-        """Transcribe audio using session model."""
-        # Update activity - extends session
-        self.update_activity()
-        
-        self.processing = True
-        self.update_status()
-        
-        try:
-            # Load audio
-            audio, sample_rate = sf.read(audio_file)
-            audio = audio.astype('float32')
-            
-            if len(audio.shape) > 1:
-                audio = np.mean(audio, axis=1)
-            
-            # Apply noise cancelling preprocessing
-            audio = self.preprocess_audio(audio, sample_rate)
-            
-            # Pre-filter empty audio
-            if not self.check_audio_content(audio, sample_rate):
-                logging.info("Skipping empty audio - session extended")
-                return []
-            
-            # Load model on-demand for session
-            if not self.load_model_on_demand():
-                return []
-            
-            # Transcribe with session model
-            start_time = time.time()
-            segments, info = self.model.transcribe(
-                audio,
-                language="en",
-                beam_size=5,
-                best_of=5,
-                temperature=0,
-                vad_filter=True,
-                vad_parameters=dict(
-                    threshold=0.16,  # Just above early ambient RMS (0.159) for optimal speech detection
-                    min_silence_duration_ms=500,
-                    min_speech_duration_ms=100
-                )
+            # Step 2: Speech engine transcription
+            self.logger.info("Transcribing with optimized VAD parameters...")
+            transcription_result = self.speech_engine.transcribe_audio(
+                processed_audio.audio, 
+                processed_audio.sample_rate
             )
             
-            # Extract results
-            results = []
-            for seg in segments:
-                text = seg.text.strip()
-                if text:
-                    results.append(text)
+            if not transcription_result.success:
+                return {
+                    "success": False,
+                    "results": [],
+                    "error": transcription_result.error_message,
+                    "audio_analysis": processed_audio.analysis.__dict__
+                }
             
-            transcribe_time = time.time() - start_time
-            
-            if self.is_model_loaded:
-                logging.info(f"SESSION transcription: {transcribe_time:.3f}s (model cached)")
+            # Step 3: Text output
+            if transcription_result.segments:
+                self.logger.info(f"Typing {len(transcription_result.segments)} segments...")
+                typed_count = self.text_output.type_transcription_results(transcription_result.segments)
+                
+                if typed_count == 0:
+                    self.logger.warning("Failed to type any transcription results")
             else:
-                logging.info(f"Transcription: {transcribe_time:.3f}s")
+                self.logger.info("No transcription segments to output")
             
-            logging.info(f"Session will stay active until {time.strftime('%H:%M:%S', time.localtime(time.time() + self.session_timeout))}")
+            # Log session continuation
+            expiry_time = time.strftime('%H:%M:%S', 
+                                     time.localtime(self.session_coordinator.get_session_expiry_time()))
+            self.logger.info(f"Session will stay active until {expiry_time}")
             
-            return results
+            return {
+                "success": True,
+                "results": transcription_result.segments,
+                "processing_time": transcription_result.processing_time,
+                "device_used": transcription_result.device_used,
+                "audio_analysis": processed_audio.analysis.__dict__,
+                "preprocessing_applied": processed_audio.preprocessing_applied,
+                "debug_file": processed_audio.debug_file
+            }
             
         except Exception as e:
-            logging.error(f"Transcription failed: {e}")
-            return []
+            self.logger.error(f"Transcription pipeline failed: {e}")
+            return {
+                "success": False,
+                "results": [],
+                "error": str(e)
+            }
         finally:
-            self.processing = False
-            self.update_status()
+            self.session_coordinator.set_processing(False)
+            self._update_status()
     
-    def process_request(self, request_file):
-        """Process a single transcription request."""
+    def process_request(self, request_file: Path):
+        """Process a single transcription request using modular services."""
         try:
             with open(request_file, 'r') as f:
                 request = json.load(f)
@@ -381,56 +196,65 @@ class SessionSpeechDaemon:
             if request_id in self.request_failure_count:
                 self.request_failure_count[request_id] += 1
                 if self.request_failure_count[request_id] > self.max_request_failures:
-                    logging.error(f"Request {request_id} failed {self.max_request_failures} times - initiating emergency shutdown to prevent infinite loop")
+                    self.logger.error(f"Request {request_id} failed {self.max_request_failures} times - initiating emergency shutdown to prevent infinite loop")
                     self.shutdown_requested = True
                     return
             else:
                 self.request_failure_count[request_id] = 0
             
-            logging.info(f"Processing session request {request_id} (type: {request_type})")
+            self.logger.info(f"Processing {request_type} request {request_id}")
             
             # Handle ping requests for responsiveness testing
             if request_type == 'ping':
-                logging.info(f"Ping request received: {request_id}")
+                status = self.session_coordinator.get_session_status()
                 response = {
                     'id': request_id,
                     'type': 'pong',
                     'timestamp': time.time(),
-                    'device': self.device,
-                    'session_active': self.is_model_loaded
+                    'device': self.speech_engine.device,
+                    'session_active': status.active,
+                    'model_loaded': self.speech_engine.is_model_loaded,
+                    'uptime': status.uptime
                 }
             else:
-                # Handle normal transcription requests
+                # Handle transcription requests
                 audio_file = request.get('audio_file')
-                results = self.transcribe_audio(audio_file)
+                if not audio_file:
+                    raise ValueError("No audio_file specified in request")
+                
+                result = self.transcribe_audio_file(audio_file)
                 
                 response = {
                     'id': request_id,
-                    'results': results,
+                    'results': result.get('results', []),
                     'timestamp': time.time(),
-                    'device': self.device,
-                    'session_active': self.is_model_loaded
+                    'device': self.speech_engine.device,
+                    'session_active': self.session_coordinator.is_session_active(),
+                    'success': result.get('success', False),
+                    'processing_time': result.get('processing_time', 0.0),
+                    'metadata': {
+                        'audio_analysis': result.get('audio_analysis'),
+                        'preprocessing_applied': result.get('preprocessing_applied'),
+                        'debug_file': result.get('debug_file')
+                    }
                 }
+                
+                if not result.get('success'):
+                    response['error'] = result.get('error', 'Unknown error')
             
+            # Write response
             response_file = self.response_dir / f"{request_id}.json"
             with open(response_file, 'w') as f:
                 json.dump(response, f)
             
-            # Auto-type results (skip for ping requests)
-            if request_type != 'ping' and 'results' in response:
-                for text in response['results']:
-                    try:
-                        pyautogui.typewrite(text + ' ')
-                        logging.info(f"Typed: {text}")
-                    except Exception as e:
-                        logging.warning(f"Typing failed: {e}")
+            # Clean up request
+            request_file.unlink()
             
             # Clear failure count on successful completion
             if request_id in self.request_failure_count:
                 del self.request_failure_count[request_id]
             
-            # Clean up request
-            request_file.unlink()
+            self.logger.info(f"Request {request_id} completed successfully")
             
         except Exception as e:
             # Track failure for infinite loop detection
@@ -439,105 +263,111 @@ class SessionSpeechDaemon:
             elif request_id:
                 self.request_failure_count[request_id] += 1
                 
-            logging.error(f"Request processing failed: {e} (failure #{self.request_failure_count.get(request_id, 1)})")
+            self.logger.error(f"Request processing failed: {e} (failure #{self.request_failure_count.get(request_id, 1)})")
+            
+            # Try to write error response
+            try:
+                if 'request_id' in locals():
+                    error_response = {
+                        'id': request_id,
+                        'success': False,
+                        'error': str(e),
+                        'timestamp': time.time()
+                    }
+                    
+                    response_file = self.response_dir / f"{request_id}.json"
+                    with open(response_file, 'w') as f:
+                        json.dump(error_response, f)
+            except Exception:
+                pass  # Best effort error response
+    
+    def shutdown(self):
+        """Graceful shutdown of all services."""
+        self.logger.info("Shutting down session daemon...")
+        
+        # Request shutdown from session coordinator
+        self.session_coordinator.request_shutdown()
+        
+        # Release speech engine resources
+        if self.speech_engine.is_model_loaded:
+            self.speech_engine.release_model()
+        
+        # Clean up session files
+        self.session_coordinator.cleanup_session_files()
+        
+        self.logger.info("Modular session daemon shutdown complete")
     
     def run(self):
-        """Main daemon loop."""
-        logging.info("Session daemon started - waiting for requests...")
+        """Main daemon loop with modular service coordination."""
+        self.logger.info("Modular session daemon started - waiting for requests...")
         
-        while not self.shutdown_requested:
+        while self.session_coordinator.is_session_active() and not self.shutdown_requested:
             try:
                 # Check for new requests
                 request_files = list(self.request_dir.glob("*.json"))
                 
                 for request_file in request_files:
-                    if self.shutdown_requested:
+                    if not self.session_coordinator.is_session_active() or self.shutdown_requested:
                         break
+                    
                     self.process_request(request_file)
+                    
+                    # Additional safety check after processing
+                    if self.shutdown_requested:
+                        self.logger.error("Emergency shutdown triggered - terminating daemon")
+                        break
                 
-                # Brief pause
+                # Brief pause between checks
                 time.sleep(0.1)
                 
             except KeyboardInterrupt:
-                logging.info("Received shutdown signal")
+                self.logger.info("Received shutdown signal")
                 break
             except Exception as e:
-                logging.error(f"Daemon error: {e}")
+                self.logger.error(f"Daemon loop error: {e}")
                 time.sleep(1)
         
-        self.shutdown_session()
+        # Shutdown
+        self.shutdown()
 
-def check_existing_daemon():
-    """Check if daemon is already running and responsive."""
-    pid_file = Path("/tmp/session_daemon.pid")
-    
-    # Check if PID file exists
-    if not pid_file.exists():
-        return False
-    
-    try:
-        with open(pid_file, 'r') as f:
-            pid = int(f.read().strip())
-        
-        # Check if process is actually running
-        os.kill(pid, 0)  # Send signal 0 to check if process exists
-        
-        # Check if daemon is responsive (status file updated recently)
-        status_file = Path("/tmp/session_daemon_status.json")
-        if status_file.exists():
-            with open(status_file, 'r') as f:
-                status = json.load(f)
-            
-            # Consider daemon responsive if status updated within last 60 seconds
-            if time.time() - status.get('timestamp', 0) < 60:
-                logging.info(f"Found responsive daemon with PID {pid}")
-                return True
-        
-        # Process exists but daemon not responsive - clean up stale PID file
-        logging.warning(f"Found unresponsive daemon with PID {pid}, cleaning up...")
-        pid_file.unlink()
-        return False
-        
-    except (ValueError, ProcessLookupError, FileNotFoundError):
-        # PID file invalid or process not found - clean up
-        try:
-            pid_file.unlink()
-        except FileNotFoundError:
-            pass
-        return False
 
 def signal_handler(sig, frame):
     """Handle shutdown signals gracefully."""
     global daemon
     if daemon:
-        daemon.shutdown_session()
+        daemon.shutdown()
     sys.exit(0)
+
 
 def main():
     """Main daemon entry point."""
     global daemon
     
     # Check if daemon is already running
-    if check_existing_daemon():
-        logging.info("Session daemon already running - exiting")
+    from session_coordinator import check_existing_session
+    
+    existing_session = check_existing_session()
+    if existing_session and existing_session.get('responsive'):
+        logging.info(f"Session daemon already running (PID: {existing_session['pid']}) - exiting")
         sys.exit(0)
     
     # Set up signal handling
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
     
-    # Parse arguments for session timeout
+    # Parse session timeout argument
     session_timeout = 600  # 10 minutes default
     if len(sys.argv) > 1:
         try:
             session_timeout = int(sys.argv[1])
         except ValueError:
-            logging.warning("Invalid timeout, using default 10 minutes")
+            logging.warning("Invalid timeout argument, using default 10 minutes")
     
-    # Create and start session daemon
-    logging.info(f"Starting Session Speech Daemon (timeout: {session_timeout/60:.1f}min)...")
+    # Create and start modular daemon
+    logging.info(f"Starting Modular Session Speech Daemon (timeout: {session_timeout/60:.1f}min)...")
     daemon = SessionSpeechDaemon(session_timeout=session_timeout)
     daemon.run()
+
 
 if __name__ == "__main__":
     daemon = None
