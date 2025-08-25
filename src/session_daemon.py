@@ -72,6 +72,7 @@ class SessionSpeechDaemon:
         self.response_dir = Path("/tmp/speech_session_responses")
         self.status_file = Path("/tmp/session_daemon_status.json")
         self.session_file = Path("/tmp/session_daemon_active")
+        self.pid_file = Path("/tmp/session_daemon.pid")
         
         self.setup_directories()
         self.initialize_cuda_context()
@@ -87,6 +88,10 @@ class SessionSpeechDaemon:
         self.request_dir.mkdir(exist_ok=True)
         self.response_dir.mkdir(exist_ok=True)
         
+        # Create PID file for single-instance protection
+        with open(self.pid_file, 'w') as f:
+            f.write(str(os.getpid()))
+        
         # Create session marker file
         with open(self.session_file, 'w') as f:
             json.dump({
@@ -94,7 +99,7 @@ class SessionSpeechDaemon:
                 "pid": os.getpid()
             }, f)
         
-        logging.info(f"Session daemon directories ready")
+        logging.info(f"Session daemon directories ready (PID: {os.getpid()})")
     
     def initialize_cuda_context(self):
         """Initialize device selection for model loading."""
@@ -185,6 +190,8 @@ class SessionSpeechDaemon:
         
         # Clean up session files
         try:
+            if self.pid_file.exists():
+                self.pid_file.unlink()
             if self.session_file.exists():
                 self.session_file.unlink()
             if self.status_file.exists():
@@ -364,6 +371,45 @@ class SessionSpeechDaemon:
         
         self.shutdown_session()
 
+def check_existing_daemon():
+    """Check if daemon is already running and responsive."""
+    pid_file = Path("/tmp/session_daemon.pid")
+    
+    # Check if PID file exists
+    if not pid_file.exists():
+        return False
+    
+    try:
+        with open(pid_file, 'r') as f:
+            pid = int(f.read().strip())
+        
+        # Check if process is actually running
+        os.kill(pid, 0)  # Send signal 0 to check if process exists
+        
+        # Check if daemon is responsive (status file updated recently)
+        status_file = Path("/tmp/session_daemon_status.json")
+        if status_file.exists():
+            with open(status_file, 'r') as f:
+                status = json.load(f)
+            
+            # Consider daemon responsive if status updated within last 60 seconds
+            if time.time() - status.get('timestamp', 0) < 60:
+                logging.info(f"Found responsive daemon with PID {pid}")
+                return True
+        
+        # Process exists but daemon not responsive - clean up stale PID file
+        logging.warning(f"Found unresponsive daemon with PID {pid}, cleaning up...")
+        pid_file.unlink()
+        return False
+        
+    except (ValueError, ProcessLookupError, FileNotFoundError):
+        # PID file invalid or process not found - clean up
+        try:
+            pid_file.unlink()
+        except FileNotFoundError:
+            pass
+        return False
+
 def signal_handler(sig, frame):
     """Handle shutdown signals gracefully."""
     global daemon
@@ -374,6 +420,11 @@ def signal_handler(sig, frame):
 def main():
     """Main daemon entry point."""
     global daemon
+    
+    # Check if daemon is already running
+    if check_existing_daemon():
+        logging.info("Session daemon already running - exiting")
+        sys.exit(0)
     
     # Set up signal handling
     signal.signal(signal.SIGINT, signal_handler)

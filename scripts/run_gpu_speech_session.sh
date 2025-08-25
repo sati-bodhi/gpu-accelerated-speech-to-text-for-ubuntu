@@ -8,32 +8,75 @@ STATUS_FILE="/tmp/session_daemon_status.json"
 SESSION_FILE="/tmp/session_daemon_active"
 PROJECT_DIR="/home/sati/speech-to-text-for-ubuntu"
 
-# Function to start session daemon
+# Function to check if daemon is already running using PID file
+check_daemon_pid() {
+    local pid_file="/tmp/session_daemon.pid"
+    
+    # Check if PID file exists
+    if [ ! -f "$pid_file" ]; then
+        return 1  # No PID file, daemon not running
+    fi
+    
+    # Check if process is actually running
+    local pid=$(cat "$pid_file" 2>/dev/null)
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+        echo "Found running daemon with PID $pid"
+        return 0  # Daemon is running
+    else
+        # PID file exists but process not running - clean up
+        rm -f "$pid_file"
+        return 1  # Daemon not running
+    fi
+}
+
+# Function to start session daemon with atomic locking
 start_session_daemon() {
     echo "Starting session speech daemon..."
     cd "$PROJECT_DIR"
     
-    # Don't kill existing daemon - let it run for session persistence
-    # Only start if no daemon is running
-    if pgrep -f "session_daemon.py" > /dev/null; then
-        echo "Found existing daemon process, checking status..."
-        return 0  # Let status check handle it
-    fi
+    local lock_file="/tmp/session_daemon_startup.lock"
     
-    # Start new session daemon (10 minute timeout)
-    nohup ./venv/bin/python3 src/session_daemon.py 600 > /tmp/session_daemon_startup.log 2>&1 &
-    
-    # Wait for daemon to start
-    for i in {1..30}; do
-        if [ -f "$STATUS_FILE" ] && [ -f "$SESSION_FILE" ]; then
-            echo "Session daemon started successfully"
-            return 0
+    # Atomic startup with file locking to prevent race conditions
+    (
+        # Try to acquire exclusive lock (wait up to 5 seconds)
+        if ! flock -x -w 5 200; then
+            echo "Could not acquire startup lock, another daemon may be starting"
+            exit 1
         fi
-        sleep 0.1
-    done
+        
+        # Double-check if daemon started while we were waiting for lock
+        if check_daemon_pid; then
+            echo "Session daemon already running (started while waiting for lock)"
+            exit 0
+        fi
+        
+        echo "Acquired startup lock, proceeding with daemon startup..."
+        
+        # Clean up any stale files before starting
+        rm -f /tmp/session_daemon.pid /tmp/session_daemon_status.json /tmp/session_daemon_active
+        
+        # Set CUDNN library paths before starting daemon
+        export LD_LIBRARY_PATH="$PROJECT_DIR/venv/lib/python3.10/site-packages/nvidia/cudnn/lib:$PROJECT_DIR/venv/lib/python3.10/site-packages/nvidia/cublas/lib:$LD_LIBRARY_PATH"
+        
+        # Start new session daemon (10 minute timeout)
+        nohup ./venv/bin/python3 src/session_daemon.py 600 > /tmp/session_daemon_startup.log 2>&1 &
+        
+        # Wait for daemon to start and create files
+        for i in {1..30}; do
+            if [ -f "/tmp/session_daemon.pid" ] && [ -f "$STATUS_FILE" ]; then
+                echo "Session daemon started successfully"
+                exit 0
+            fi
+            sleep 0.1
+        done
+        
+        echo "Failed to start session daemon"
+        exit 1
+        
+    ) 200>"$lock_file"
     
-    echo "Failed to start session daemon"
-    return 1
+    # Return the exit code from the subshell
+    return $?
 }
 
 # Function to check daemon status

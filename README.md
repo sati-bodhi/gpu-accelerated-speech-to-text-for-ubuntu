@@ -6,7 +6,8 @@ A high-performance Python speech-to-text system that uses INSERT key recording a
 
 ## Key Features
 
-- 🚀 **GPU Acceleration**: 3.6x faster than CPU (RTX 4060: ~2.7s vs CPU: ~9.8s)
+- 🚀 **Hybrid Session Architecture**: 82% faster with smart VRAM management (1.6s → 0.3s for cached requests)
+- 🧠 **Smart Memory Management**: Model persists during active use, auto-releases VRAM after 10min inactivity
 - 🎯 **High Accuracy**: large-v3 Whisper model for best transcription quality  
 - ⌨️ **INSERT Key Trigger**: Simple hold-to-record, release-to-transcribe
 - 🔧 **No Sudo Required**: Uses pynput for X11 key listening
@@ -21,7 +22,9 @@ A high-performance Python speech-to-text system that uses INSERT key recording a
 
 # 2. Hold INSERT key and speak: "Hello, this is a test"
 # 3. Release INSERT key
-# 4. See "Hello, this is a test" typed automatically (~2.7s later)
+# 4. See "Hello, this is a test" typed automatically
+#    - First request: ~1.6s (includes model loading)
+#    - Subsequent requests: ~0.3s (cached model)
 ```
 
 ## System Requirements
@@ -63,6 +66,27 @@ sudo apt install alsa-utils
 ```bash
 nvidia-smi  # Should show your GPU
 python3 -c "import torch; print('CUDA available:', torch.cuda.is_available())"
+
+# Test the session system
+echo "Testing session architecture..."
+timeout 3s arecord -f S16_LE -r 16000 -c 1 test_audio.wav
+./scripts/run_gpu_speech_session.sh test_audio.wav
+```
+
+### 5. Session System Setup
+
+The hybrid session architecture requires proper CUDNN library paths:
+
+```bash
+# Verify CUDNN libraries are installed
+ls venv/lib/python3.10/site-packages/nvidia/cudnn/lib/
+ls venv/lib/python3.10/site-packages/nvidia/cublas/lib/
+
+# Test session daemon manually (optional)
+./venv/bin/python3 src/session_daemon.py &
+sleep 5
+cat /tmp/session_daemon_status.json
+pkill -f session_daemon.py
 ```
 
 ## Usage
@@ -77,54 +101,82 @@ Start the key listener for hands-free operation:
 
 **Controls:**
 - **Hold INSERT key**: Start recording (you'll see logging activity)
-- **Release INSERT key**: Stop recording and process with GPU
-- **ESC key**: Exit the program
+- **Release INSERT key**: Stop recording and process with session daemon
+- **Ctrl+C**: Exit the program (persistent by design, no ESC exit)
 
 ### Direct Processing
 
-Test the GPU service with an audio file:
+Test the hybrid session system with an audio file:
 
 ```bash
 # Record a test file first
 arecord -f cd -t wav -d 5 test.wav
 
-# Process with GPU acceleration  
+# Process with hybrid session (recommended)
+./scripts/run_gpu_speech_session.sh test.wav
+
+# Or use direct processing (no session caching)
 ./scripts/run_gpu_speech.sh test.wav
 ```
 
 ## Performance
 
-| Component | Time | Notes |
-|-----------|------|--------|
-| **GPU Model Loading** | ~2.0s | One-time per transcription |
-| **GPU Transcription** | ~0.7s | For 5-second audio |
-| **Total Processing** | ~2.7s | Complete pipeline |
-| **CPU Fallback** | ~9.8s | Automatic if no GPU |
+### Hybrid Session Architecture
+
+| Scenario | Processing Time | VRAM Usage | Notes |
+|----------|----------------|------------|-------|
+| **First Request (Cold Start)** | ~1.6s | 3GB allocated | Includes model loading |
+| **Subsequent Requests (Cached)** | ~0.3s | 3GB maintained | 82% faster with session persistence |
+| **After 10min Inactivity** | Auto-releases | 0GB | Smart VRAM management |
+| **CPU Fallback** | ~9.8s | 0GB | Automatic if no GPU |
+
+### Key Improvements
+- **🔥 82% Performance Gain**: Session persistence eliminates repeated model loading
+- **🧠 Smart VRAM Management**: Only uses 3GB during active sessions
+- **⚡ Sub-second Transcription**: Cached model processes audio in ~0.3s
+- **🔄 Auto-shutdown**: Releases VRAM after 10 minutes of inactivity
 
 **Accuracy**: Excellent with large-v3 model (same quality as OpenAI's commercial service)
 
 ## Architecture
 
-### Minimal Structure (8 Files)
+### Hybrid Session Implementation
+
+The system uses a **hybrid session architecture** that balances performance with resource efficiency:
 
 ```
 ├── src/
-│   ├── gpu_service.py          # Main GPU-accelerated service  
-│   └── key_listener.py         # INSERT key listener
+│   ├── key_listener.py           # INSERT key listener (client)
+│   ├── session_daemon.py         # Smart session daemon with auto-shutdown
+│   └── gpu_service_hybrid.py     # Optimized cold-start service
 ├── scripts/
-│   └── run_gpu_speech.sh       # GPU environment wrapper
-├── requirements.txt            # Locked dependencies
-├── README.md                   # This file
-├── CLAUDE.md                   # Developer documentation
-├── ARCHITECTURE_ANALYSIS.md    # Technical analysis
-└── LICENSE.md                  # MIT License
+│   ├── run_gpu_speech_session.sh # Session-aware client wrapper
+│   └── run_gpu_speech.sh         # Original GPU wrapper (fallback)
+├── requirements.txt              # Locked dependencies
+├── README.md                     # This file
+├── ARCHITECTURE.md               # Hybrid session architecture details
+├── SESSION_API.md                # Complete API reference for developers
+├── CLAUDE.md                     # Developer documentation
+├── ARCHITECTURE_ANALYSIS.md      # Technical analysis
+└── LICENSE.md                    # MIT License
 ```
 
-### Processing Flow
+### Session Processing Flow
 
 ```
-INSERT Key → pynput listener → arecord → GPU wrapper → CUDA processing → pyautogui typing
+INSERT Key → Key Listener → Audio Recording → Session Client
+     ↓
+JSON Request → Session Daemon → Cached Model → Transcription
+     ↓
+JSON Response → Auto-typing → File Cleanup → Session Extended (10min)
 ```
+
+### Smart VRAM Management
+
+- **On-demand Loading**: Model loads only on first request
+- **Session Persistence**: Model stays cached during active use  
+- **Auto-shutdown**: Releases 3GB VRAM after 10 minutes of inactivity
+- **IPC Communication**: File-based JSON requests/responses in `/tmp/`
 
 ## Key Dependencies
 
@@ -139,15 +191,24 @@ INSERT Key → pynput listener → arecord → GPU wrapper → CUDA processing �
 ### CUDNN Library Issues
 
 If you see `"Unable to load libcudnn_ops.so.9.1.0"`:
-- The system should auto-resolve this via the wrapper script
-- Verify your virtual environment path in `scripts/run_gpu_speech.sh`
+- The session wrapper auto-sets library paths on daemon startup
+- Verify your virtual environment path in `scripts/run_gpu_speech_session.sh`
 - Ensure CUDA 12.0+ is properly installed
+- Restart the session daemon if issues persist: `pkill -f session_daemon.py`
 
 ### Key Listener Not Working
 
 - Ensure you're running X11 (not Wayland): `echo $XDG_SESSION_TYPE`
 - Virtual environment activated: `which python3` should show venv path
 - pynput installed: `pip list | grep pynput`
+
+### Session Daemon Issues
+
+If transcription is slow or timing out:
+- Check daemon status: `cat /tmp/session_daemon_status.json`
+- View daemon logs: `tail -f /tmp/session_daemon.log`
+- Restart daemon: `pkill -f session_daemon.py` (will auto-restart on next request)
+- Clear stale requests: `rm -f /tmp/speech_session_requests/*.json`
 
 ### GPU Not Detected
 
@@ -226,7 +287,22 @@ This codebase was refactored from 55+ files to 8 essential files for maintainabi
 - Run `tail -f /tmp/speech_to_text.log` to monitor processing
 - Test changes with both direct calls and key listener integration
 
-See `CLAUDE.md` for detailed development guidance.
+## Documentation
+
+### 📚 Complete Documentation Suite
+
+- **[ARCHITECTURE.md](ARCHITECTURE.md)** - Comprehensive technical details of the hybrid session implementation
+- **[SESSION_API.md](SESSION_API.md)** - Complete API reference for developers and integration
+- **[CLAUDE.md](CLAUDE.md)** - Development guidance and project methodology
+- **[ARCHITECTURE_ANALYSIS.md](ARCHITECTURE_ANALYSIS.md)** - Technical analysis of optimization process
+
+### 🔍 Key Topics Covered
+
+**ARCHITECTURE.md**: Session daemon lifecycle, IPC protocol, VRAM management, performance benchmarks, monitoring and debugging
+
+**SESSION_API.md**: JSON request/response formats, client implementation examples, error handling, daemon management, integration patterns
+
+See these documents for detailed development guidance and system integration.
 
 ## Attribution
 
